@@ -1,0 +1,56 @@
+{
+  "row_configurations": [
+    {
+      "project_code": "0002",
+      "display_name": "Annual Leave",
+      "is_prefix": true
+    },
+    {
+      "project_code": "0004",
+      "display_name": "Holiday",
+      "is_prefix": true,
+      "is_holiday_code": true
+    },
+    {
+      "project_code": "0003",
+      "display_name": "Sick",
+      "is_prefix": true
+    },
+    {
+      "project_code": "0001",
+      "display_name": "0001 General",
+      "is_suffix": true
+    },
+    {
+      "project_code": "0010",
+      "display_name": "0010 Internal Training",
+      "is_suffix": true
+    },
+    {
+      "project_code": "0009",
+      "display_name": "0009 External Training",
+      "is_suffix": true
+    },
+    {
+      "project_code": "0008",
+      "display_name": "0008 ISO",
+      "is_suffix": true
+    },
+    {
+      "project_code": "0007",
+      "display_name": "0007 Study Leave",
+      "is_suffix": true
+    },
+    {
+      "project_code": "0005",
+      "display_name": "0005 Compassionate Leave",
+      "is_suffix": true
+    },
+    {
+      "project_code": "0006",
+      "display_name": "0006 Maternity/Paternity Leave",
+      "is_suffix": true
+    }
+    
+  ]
+}

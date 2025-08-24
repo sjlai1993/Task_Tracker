@@ -1,0 +1,44 @@
+{
+    "work_start_time_flexible": {
+        "lower": "08:00:00",
+        "upper": "09:15:00"
+    },
+    "daily_working_hours": 8.0,
+    "lunch_hour": {
+        "start": "12:30:00",
+        "end": "13:30:00"
+    },
+    "popup_interval_minutes": 60,
+    "popup_autoclose_minutes": 1,
+    "working_days": [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday"
+    ],
+    "project_categories": [
+        "QA83",
+        "Travel"
+    ],
+    "software_used": [
+        "SAP2000",
+        "ETABS",
+        "SAFE",
+        "Excel",
+        "Protastructures",
+        "Prokon"
+    ],
+    "side_description": [
+        "0001 : General Overhead",
+        "0002 : Annual Leave",
+        "0003 : Sick Leave",
+        "PROM : Promotional Job",
+        "0005 : Compassionate Leave",
+        "0006 : Maternity / Paternity Leave",
+        "0007 : Study Leave",
+        "0008 : ISO",
+        "0009 : External Training",
+        "0010 : Internal Training"
+    ]
+}
