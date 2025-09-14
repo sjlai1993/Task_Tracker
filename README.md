@@ -102,8 +102,13 @@ The application uses several `.json` files to store settings. Most of these can 
 *   `travel.json`: Defines categories to be considered for the travel log.
 
 ## Author
+Lai Shi Jian
+
+## Disclaimer
+Fully coded by Google Gemini except minor adjustment to HTML report template
 
 *   Lai Shi Jian
+
 
 
 
