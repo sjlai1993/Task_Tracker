@@ -37,7 +37,8 @@ A comprehensive desktop application for meticulous time and task management, des
 
 ## Screenshots
 
-![alt text](image.png)
+<img width="876" height="525" alt="image" src="https://github.com/user-attachments/assets/0f74f161-de81-4110-b751-e101f5da48ee" />
+
 
 **Example Screenshots:**
 *   *General Tab: Shows the daily timeline with recorded and unrecorded slots.*
@@ -103,5 +104,6 @@ The application uses several `.json` files to store settings. Most of these can 
 ## Author
 
 *   Lai Shi Jian
+
 
 
