@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>QA83 Project Manager / Engineers Monthly Design Record</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 5mm;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 11px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      table-layout: fixed;
+    }
+    th, td {
+      border: 1px solid #000;
+      padding: 4px;
+      text-align: center;
+      vertical-align: middle;
+      word-wrap: break-word;
+    }
+    thead {
+      display: table-header-group;
+    }
+    tfoot {
+      display: table-row-group;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 5px;
+    }
+    .sub-header {
+      width: 100%;
+      margin-bottom: 10px;
+    }
+    .sub-header td {
+      border: none;
+      text-align: left;
+      padding: 2px;
+    }
+    .proj-code {
+      vertical-align: top;
+    }
+    .title, .desc {
+      text-align: left;
+      vertical-align: top;
+    }
+  </style>
+</head>
+<body>
+<table>
+  <!-- Define column widths -->
+  <colgroup>
+    <col style="width:5%">
+    <col style="width:10%">
+    <col style="width:31%">
+    <col style="width:4%">
+    <col style="width:4%">
+    <col style="width:4%">
+    <col style="width:4%">
+	<col style="width:4%">
+    <col style="width:4%">
+    <col style="width:6%">
+    <col style="width:6%">
+    <col style="width:4%">
+    <col style="width:4%">
+    <col style="width:8%">
+  </colgroup>
+
+  <thead>
+	<tr>
+	<th colspan="9" style="border:none; text-align:left; font-size:18px;">T.Y.LIN <span style="display: inline-block; font-size:14px; font-weight: normal;">INTERNATIONAL SDN BHD</span></th>
+	<th colspan="5" style="border:none; text-align:right; font-size:14px; text-decoration: underline; font-weight: normal;">Form TYL/QA83</th>
+	</tr>
+	<tr>
+	<th colspan="14" style="border:none; text-align:center; font-size:16px; text-decoration: underline;">Project Manager / Engineers Monthly Design Record</th>
+	<tr>
+	<th colspan="2" style="border:none; text-align:left; font-size:12px;">Name: <span style="display: inline-block; font-weight: normal; text-decoration:underline;">{{name}}</span></th>
+	<th colspan="9" style="border:none; text-align:center; font-size:12px;">Designation: <span style="display: inline-block; font-weight: normal; text-decoration:underline;">{{designation}}</span></th>
+	<th colspan="3" style="border:none; text-align:right; font-size:12px;">Month & Year: <span style="display: inline-block; font-weight: normal; text-decoration:underline;">{{month_year}}</span></th>
+	</tr>
+    <tr>
+      <th rowspan="2">Job No.</th>
+      <th rowspan="2">Project Title</th>
+      <th rowspan="2">Description of Work Done<br>(To check against monthly manpower allocation chart)</th>
+      <th colspan="6">Percentage of Works Completion (%)</th>
+      <th colspan="2">Reviewed / Checked by (PM / PE)</th>
+      <th colspan="2">Design Works Compliance</th>
+      <th rowspan="2">Remarks / Comments</th>
+    </tr>
+    <tr>
+      <th>1<sup>st</sup> Week</th>
+      <th>2<sup>nd</sup> Week</th>
+      <th>3<sup>rd</sup> Week</th>
+      <th>4<sup>th</sup> Week</th>
+      <th>5<sup>th</sup> Week</th>
+	  <th>6<sup>th</sup> Week</th>
+      <th>Name / Initial</th>
+      <th>Date</th>
+	  <th>Yes</th>
+	  <th>No</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{table_rows}}
+    <!-- Repeat rows as needed -->
+  <tr>
+      <th colspan="8" style="border:none;"></th>
+      <th colspan="4" style="border:none; text-align:right; font-weight: normal;">Total Non-Compliance Design :    </th>
+      <th>0</th>
+      <th style="border:none;"></th>
+    </tr>
+	<tr>
+      <th colspan="13" style="border:none;"></th>
+      
+    </tr>
+	<tr>
+      <th colspan="13" style="border:none;  text-align:left; text-decoration: underline;">Overall Review by Principal / Immediate Superior</th>
+      
+    </tr>
+	<th colspan="14" style="border:none;"></th>
+	<tr>
+      <th colspan="14" style="border:none; text-align:left; font-weight: normal;">
+	  <span style="display: inline-block; width: 80%; text-align:left;"><span style="display: inline-block; flex:1; width:15%;">Comment : </span><span style="display: inline-block; flex:1; border-bottom:1px solid #000; width:85%;"></span></span>
+	  <span style="display: inline-block;  width: 19%; text-align:right;">Evaluated by: <span style="display: inline-block; flex:1; border-bottom:1px solid #000;  width: 40%;"></span></span>
+	  </th>
+      
+    </tr>
+	<th colspan="14" style="border:none;"></th>
+	<tr>
+      <th colspan="14" style="border:none; text-align:left; font-weight: normal;">
+	  <span style="display: inline-block; width: 80%; text-align:left;"><span style="display: inline-block; flex:1; width:15%;">Recommendation : </span><span style="display: inline-block; flex:1; border-bottom:1px solid #000; width:85%;"></span></span>
+	  <span style="display: inline-block;  width: 19%; text-align:right;">Date : <span style="display: inline-block; flex:1; border-bottom:1px solid #000;  width: 40%;"></span></span>
+	  </th>
+      
+    </tr>
+  </tbody>
+</table>
+
+</body>
+</html>

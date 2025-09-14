@@ -4,6 +4,7 @@ import json
 import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QTableWidget, QTableWidgetItem, QDialog,
+
                              QGroupBox, QGridLayout, QCalendarWidget, QHeaderView,
                              QAbstractItemView, QStyledItemDelegate, QStyle, QApplication, QMenu)
 from PySide6.QtCore import Qt, QDate
@@ -12,7 +13,6 @@ from datetime import datetime, timedelta, time
 
 class CopyableTableWidget(QTableWidget):
     """A QTableWidget subclass that supports copying selected cells to the clipboard."""
-    
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -39,9 +39,6 @@ class CopyableTableWidget(QTableWidget):
         else:
             super().keyPressEvent(event)
             
-    # =====================================================================
-    # === MODIFIED SECTION START (Add Context Menu for Right-Click) ===
-    # =====================================================================
     def contextMenuEvent(self, event):
         """Creates and shows a context menu on right-click."""
         menu = QMenu(self)
@@ -49,19 +46,13 @@ class CopyableTableWidget(QTableWidget):
         copy_action = menu.addAction("Copy (Ctrl+C)")
         copy_action.triggered.connect(self.copy_selection)
         
-        # Disable the "Copy" option if no cells are selected
         if not self.selectedRanges():
             copy_action.setEnabled(False)
             
-        # Show the menu at the global position of the mouse click
         menu.exec(event.globalPos())
-    # =====================================================================
-    # === MODIFIED SECTION END ===
-    # =====================================================================
 
-
-class TimesheetDelegate(QStyledItemDelegate):
-    """A custom delegate to handle special drawing for all cells."""
+class CustomCellDelegate(QStyledItemDelegate):
+    """A custom delegate to handle special drawing for all cells in timesheet."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.weekend_color = QColor("#88E788")
@@ -161,7 +152,7 @@ class TimesheetTab(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
-        self.delegate = TimesheetDelegate(self)
+        self.delegate = CustomCellDelegate(self)
         self.table.setItemDelegate(self.delegate)
 
         header = self.table.horizontalHeader()
@@ -243,7 +234,8 @@ class TimesheetTab(QWidget):
                     if proj_code not in project_hours:
                         project_hours[proj_code] = [0.0] * 7
                     project_hours[proj_code][i] += duration
-                except ValueError: continue
+                except ValueError:
+                    continue
 
         row_configs = self.timesheet_config.get("row_configurations", [])
         holiday_project_code = next((c.get("project_code") for c in row_configs if c.get("is_holiday_code")), None)
@@ -262,8 +254,10 @@ class TimesheetTab(QWidget):
             code = item.get("project_code")
             if not code: continue
             display_map[code] = item.get("display_name", code)
-            if item.get("is_prefix"): prefix_projects.append(code)
-            elif item.get("is_suffix"): suffix_projects.append(code)
+            if item.get("is_prefix"):
+                prefix_projects.append(code)
+            elif item.get("is_suffix"):
+                suffix_projects.append(code)
 
         projects_with_hours = set(project_hours.keys())
         prefix_set, suffix_set = set(prefix_projects), set(suffix_projects)

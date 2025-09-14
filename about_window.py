@@ -1,9 +1,10 @@
 # about_window.py
 
 import os
+import sys  # <--- ADDED IMPORT
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton)
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QIcon
 
 class AboutWindow(QDialog):
     def __init__(self, version, parent=None):
@@ -16,25 +17,29 @@ class AboutWindow(QDialog):
     def init_ui(self):
         layout = QVBoxLayout(self)
 
-        script_dir = os.path.dirname(os.path.realpath(__file__))
-        icon_path = os.path.join(script_dir, "icon.png")
+        # =====================================================================
+        # === MODIFIED SECTION START (Robust path resolution for icon) ===
+        # =====================================================================
+        if getattr(sys, 'frozen', False):
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.path.dirname(os.path.realpath(__file__))
+
+        # Change to load the .ico file, which can contain multiple sizes.
+        icon_path = os.path.join(base_path, "icon.ico")
+        # =====================================================================
+        # === MODIFIED SECTION END ===
+        # =====================================================================
         if os.path.exists(icon_path):
             icon_label = QLabel()
-            pixmap = QPixmap(icon_path)
-            # =====================================================================
-            # === MODIFIED SECTION START (Force high-quality smooth scaling) ===
-            # =====================================================================
-            # Even if the image is 150x150, using .scaled() with SmoothTransformation
-            # forces Qt to apply an anti-aliasing filter, which will smooth out
-            # any jagged edges present in the source image file itself.
-            icon_label.setPixmap(pixmap.scaled(
-                150, 150, 
-                Qt.AspectRatioMode.KeepAspectRatio, 
-                Qt.TransformationMode.SmoothTransformation # This is the crucial part
-            ))
-            # =====================================================================
-            # === MODIFIED SECTION END ===
-            # =====================================================================
+            
+            # 1. Load the multi-image .ico file into a QIcon object.
+            app_icon = QIcon(icon_path)
+            
+            # 2. Request a QPixmap of a specific size. QIcon will automatically
+            #    select the best-matching image from the .ico file to generate it.
+            pixmap = app_icon.pixmap(200, 200)
+            icon_label.setPixmap(pixmap)
             icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(icon_label)
         

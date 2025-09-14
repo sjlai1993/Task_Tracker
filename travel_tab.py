@@ -3,12 +3,14 @@
 import json
 import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QTableWidget, QTableWidgetItem, QDialog,
+                             QLabel, QTableWidgetItem, QDialog,
                              QGroupBox, QGridLayout, QCalendarWidget, QHeaderView,
                              QAbstractItemView)
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QTextDocument
 from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
+from timesheet_tab import CopyableTableWidget
 
 class TravelTab(QWidget):
     CONFIG_FILE = 'travel.json'
@@ -62,21 +64,24 @@ class TravelTab(QWidget):
         
         main_layout.addWidget(nav_group)
 
-        self.table = QTableWidget()
+        self.table = CopyableTableWidget()
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        # =====================================================================
-        # === MODIFIED SECTION START (Add Time Column) ===
-        # =====================================================================
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Date", "Time", "Project Code", "Description"])
+        
+        self.table.setStyleSheet("""
+            QTableWidget::item:selected {
+                background-color: #447ED0;
+                color: white;
+            }
+        """)
+        
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents) # Date
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents) # Time
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents) # Project Code
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)           # Description
-        # =====================================================================
-        # === MODIFIED SECTION END ===
-        # =====================================================================
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setHighlightSections(False)
 
         main_layout.addWidget(self.table)
     
@@ -110,6 +115,43 @@ class TravelTab(QWidget):
         cal_layout.addWidget(calendar)
         calendar_dialog.exec()
 
+    def _group_consecutive_tasks(self, tasks):
+        """Groups consecutive tasks with the same date, project, and description."""
+        if not tasks:
+            return []
+
+        grouped_tasks = []
+        # The tasks are already sorted by date and start time from the DB query.
+        current_group = [tasks[0]]
+
+        for i in range(1, len(tasks)):
+            prev_task = current_group[-1]
+            current_task = tasks[i]
+
+            # Grouping criteria: same day, same project code, same description
+            is_same_group = (
+                current_task[1] == prev_task[1] and  # task_date
+                current_task[4] == prev_task[4] and  # project_code
+                current_task[5] == prev_task[5]      # description
+            )
+
+            # Consecutiveness criteria: current task starts exactly where the previous one ended
+            try:
+                prev_end_time = time.fromisoformat(prev_task[3])
+                current_start_time = time.fromisoformat(current_task[2])
+                is_consecutive = (prev_end_time == current_start_time)
+            except ValueError:
+                is_consecutive = False
+
+            if is_same_group and is_consecutive:
+                current_group.append(current_task)
+            else:
+                grouped_tasks.append(current_group[0]) # Add the representative task of the completed group
+                current_group = [current_task]
+        
+        grouped_tasks.append(current_group[0]) # Add the last group's representative task
+        return grouped_tasks
+
     def update_travel_view(self):
         self.month_label.setText(self.view_date.strftime('%B %Y'))
 
@@ -132,39 +174,29 @@ class TravelTab(QWidget):
             
             current_date += timedelta(days=1)
 
-        self.table.setRowCount(len(travel_tasks))
-        for row, task in enumerate(travel_tasks):
-            # =====================================================================
-            # === MODIFIED SECTION START (Populate Time and other columns) ===
-            # =====================================================================
-            # task format: (id, date_str, start_time_str, end, proj, desc, cats, soft)
-            
-            # Format Date
+        # Group the collected tasks before displaying them
+        display_tasks = self._group_consecutive_tasks(travel_tasks)
+
+        self.table.setRowCount(len(display_tasks))
+        for row, task in enumerate(display_tasks):
             task_date_obj = datetime.strptime(task[1], "%Y-%m-%d").date()
             display_date = task_date_obj.strftime("%d/%m/%Y (%a)")
             
-            # Format Time
             start_time_obj = time.fromisoformat(task[2])
             display_time = start_time_obj.strftime("%H:%M")
 
-            # Format Description
             doc = QTextDocument()
             doc.setHtml(task[5])
             plain_text_description = doc.toPlainText()
             
-            # Create Items
             date_item = QTableWidgetItem(display_date)
             time_item = QTableWidgetItem(display_time)
             project_item = QTableWidgetItem(task[4])
             description_item = QTableWidgetItem(plain_text_description)
             
-            # Populate Table
             self.table.setItem(row, 0, date_item)
             self.table.setItem(row, 1, time_item)
             self.table.setItem(row, 2, project_item)
             self.table.setItem(row, 3, description_item)
-            # =====================================================================
-            # === MODIFIED SECTION END ===
-            # =====================================================================
 
         self.table.resizeRowsToContents()

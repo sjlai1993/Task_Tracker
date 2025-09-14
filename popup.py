@@ -1,22 +1,25 @@
 # popup.py
 
+import json
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QDateEdit, QTimeEdit, QPushButton, QCheckBox, QGroupBox,
                              QTextEdit, QScrollArea, QWidget, QMessageBox, QGridLayout,
-                             QSystemTrayIcon, QCalendarWidget)
-from PySide6.QtCore import QDate, QTime, Qt, QTimer
-from PySide6.QtGui import QFont, QTextCharFormat, QKeySequence, QColor
+                             QSystemTrayIcon, QCalendarWidget, QApplication, QCompleter)
+from PySide6.QtCore import QDate, QTime, Qt, QTimer, QEvent
+from PySide6.QtGui import (QFont, QTextCharFormat, QKeySequence, QColor, QKeyEvent,
+                         QTextDocument)
 from datetime import datetime, timedelta, time
 from database import Database
-import json
 
 class Popup(QDialog):
     def __init__(self, db, previous_task, config, parent=None, is_manual_trigger=False):
         super().__init__(parent)
         self.db = db
         self.previous_task = previous_task
-        self.config = config # Use the passed-in config object
+        self.config = config
         self.original_title = "Log Your Task"
+        self.countdown_stopped = False
+        
         self.setWindowTitle(self.original_title)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         self.help_window = None
@@ -24,9 +27,28 @@ class Popup(QDialog):
         self.holiday_format = QTextCharFormat()
         self.holiday_format.setForeground(QColor("red"))
         
+        self.pre_full_day_start_time = None
+        self.pre_full_day_end_time = None
+        
         self.init_ui()
         self.set_initial_values()
+
+        interactive_widget_types = (
+            QLineEdit, QDateEdit, QTimeEdit, 
+            QCheckBox, QPushButton
+        )
         
+        all_children = self.findChildren(QWidget)
+        
+        for widget in all_children:
+            if isinstance(widget, interactive_widget_types):
+                widget.installEventFilter(self)
+        
+        self.description_input.viewport().installEventFilter(self)
+        self.categories_group.findChild(QScrollArea).viewport().installEventFilter(self)
+
+        self.installEventFilter(self)
+
         if not is_manual_trigger:
             autoclose_minutes = self.config.get("popup_autoclose_minutes", 2)
             if autoclose_minutes > 0:
@@ -36,6 +58,67 @@ class Popup(QDialog):
                 self.countdown_timer.start(100)
                 self._update_countdown()
 
+    def showEvent(self, event):
+        """Positions the popup at the bottom-right corner of the screen when shown."""
+        super().showEvent(event)
+        
+        if not hasattr(self, '_initial_pos_set'):
+            screen = QApplication.primaryScreen()
+            if screen:
+                screen_geometry = screen.availableGeometry() 
+                padding = 20
+                x = screen_geometry.right() - self.width() - padding
+                y = screen_geometry.bottom() - self.height() - padding
+                self.move(x, y)
+                self._initial_pos_set = True
+
+    def _stop_countdown(self):
+        if not self.countdown_stopped and hasattr(self, 'countdown_timer') and self.countdown_timer.isActive():
+            self.countdown_timer.stop()
+            self.setWindowTitle(self.original_title)
+            self.countdown_stopped = True
+
+    def eventFilter(self, watched_object, event):
+        if not self.countdown_stopped and hasattr(self, 'countdown_timer') and self.countdown_timer.isActive():
+            if event.type() in [QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress]:
+                self._stop_countdown()
+        
+        if event.type() == QEvent.Type.KeyPress:
+            if self.description_input.hasFocus():
+                if event.matches(QKeySequence.StandardKey.Bold):
+                    self._format_bold()
+                    return True
+                if event.matches(QKeySequence.StandardKey.Italic):
+                    self._format_italic()
+                    return True
+                if event.matches(QKeySequence.StandardKey.Underline):
+                    self._format_underline()
+                    return True
+
+            is_ctrl_enter = (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and
+                             event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            if is_ctrl_enter and self.save_button.isEnabled():
+                self.save_task()
+                return True
+
+        return super().eventFilter(watched_object, event)
+    
+    # =====================================================================
+    # === MODIFIED SECTION START (Disable closing with Esc key) ===
+    # =====================================================================
+    def keyPressEvent(self, event: QKeyEvent):
+        """
+        Overrides the default key press event handler to prevent the Escape
+        key from closing the dialog. The "Skip" button should be used instead.
+        """
+        if event.key() == Qt.Key.Key_Escape:
+            event.ignore()
+        else:
+            super().keyPressEvent(event)
+    # =====================================================================
+    # === MODIFIED SECTION END ===
+    # =====================================================================
+    
     def show_help_message(self):
         if self.help_window and self.help_window.isVisible():
             self.help_window.activateWindow()
@@ -57,7 +140,8 @@ class Popup(QDialog):
 
     def _update_countdown(self):
         if self.time_remaining_seconds <= 0:
-            self.countdown_timer.stop()
+            if hasattr(self, 'countdown_timer'):
+                self.countdown_timer.stop()
             self.reject()
             return
         self.setWindowTitle(f"{self.original_title} ({self.time_remaining_seconds:.1f}s remaining)")
@@ -131,8 +215,15 @@ class Popup(QDialog):
         calendar = self.date_edit.calendarWidget()
         calendar.setFirstDayOfWeek(Qt.DayOfWeek.Monday)
         calendar.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.ISOWeekNumbers)
+        self.date_edit.dateChanged.connect(self._on_date_changed)
+
+        self.full_day_checkbox = QCheckBox("Full Day")
+        self.full_day_checkbox.stateChanged.connect(self._on_full_day_toggled)
+
         grid_layout.addWidget(QLabel("Date:"), 0, 0)
-        grid_layout.addWidget(self.date_edit, 0, 1, 1, 3)
+        grid_layout.addWidget(self.date_edit, 0, 1)
+        grid_layout.addWidget(self.full_day_checkbox, 0, 2, 1, 2, Qt.AlignmentFlag.AlignLeft)
+
         self.start_time_edit = QTimeEdit()
         self.end_time_edit = QTimeEdit()
         grid_layout.addWidget(QLabel("Start:"), 1, 0)
@@ -142,42 +233,58 @@ class Popup(QDialog):
         grid_layout.setColumnStretch(1, 1)
         grid_layout.setColumnStretch(3, 1)
         main_layout.addWidget(datetime_group)
-        main_layout.addWidget(QLabel("Project Code:"))
+
+        # Main input area layout (Project/Categories on left, Description on right)
+        input_area_layout = QHBoxLayout()
+
+        # Left side: Project Code and Categories
+        left_input_layout = QVBoxLayout()
+        left_input_layout.addWidget(QLabel("Project Code"))
         self.project_code_input = QLineEdit()
-        main_layout.addWidget(self.project_code_input)
-        main_layout.addWidget(QLabel("Description:"))
+        project_codes = self.db.get_unique_project_codes()
+        self.project_completer = QCompleter(project_codes, self)
+        self.project_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.project_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.project_code_input.setCompleter(self.project_completer)
+        left_input_layout.addWidget(self.project_code_input)
+
+        self.categories_group, self.category_checkboxes = self._create_scrollable_checkbox_group("Categories", self.config['project_categories'])
+        left_input_layout.addWidget(self.categories_group)
+        
+        # Right side: Task Description
+        right_input_layout = QVBoxLayout()
+        right_input_layout.addWidget(QLabel("Task Description"))
         self.description_input = QTextEdit()
-        self.description_input.setFixedHeight(100)
-        main_layout.addWidget(self.description_input)
+        right_input_layout.addWidget(self.description_input)
+
+        input_area_layout.addLayout(left_input_layout, 0)
+        input_area_layout.addLayout(right_input_layout, 1)
+
+        main_layout.addLayout(input_area_layout)
+
         self.same_as_prev_checkbox = QCheckBox("Same as previous task")
         self.same_as_prev_checkbox.stateChanged.connect(self._on_copy_previous_task_toggled)
         main_layout.addWidget(self.same_as_prev_checkbox)
-        checkbox_groups_layout = QHBoxLayout()
-        self.categories_group, self.category_checkboxes = self._create_scrollable_checkbox_group(
-            "Categories", self.config['project_categories']
-        )
-        self.software_group, self.software_checkboxes = self._create_scrollable_checkbox_group(
-            "Software Used", self.config['software_used']
-        )
-        fixed_group_width = 170
-        self.categories_group.setFixedWidth(fixed_group_width)
-        self.software_group.setFixedWidth(fixed_group_width)
-        checkbox_groups_layout.addWidget(self.categories_group)
-        checkbox_groups_layout.addWidget(self.software_group)
-        main_layout.addLayout(checkbox_groups_layout)
+
+        for checkbox in self.category_checkboxes:
+            if checkbox.text() == "QA83":
+                checkbox.setChecked(True)
+                break
+
         bottom_button_layout = QHBoxLayout()
         self.help_button = QPushButton("Additional Codes")
         self.help_button.setToolTip("Show additional project and claimable codes")
         self.help_button.clicked.connect(self.show_help_message)
         self.help_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         bottom_button_layout.addWidget(self.help_button)
-        hint_label = QLabel("<i>Ctrl+Enter to save.</i>")
+        hint_label = QLabel("<i>Ctrl+⏎ to save.</i>")
         bottom_button_layout.addWidget(hint_label)
         bottom_button_layout.addStretch()
         self.skip_button = QPushButton("Skip")
         self.skip_button.setToolTip("Close the popup without saving")
         self.skip_button.clicked.connect(self.skip_task)
         self.skip_button.setAutoDefault(False)
+        #self.skip_button.setStyleSheet("color: red;")
         bottom_button_layout.addWidget(self.skip_button)
         self.save_button = QPushButton("Save Task")
         self.save_button.setToolTip("Save the current task (Ctrl+Enter)")
@@ -188,61 +295,81 @@ class Popup(QDialog):
         main_layout.addLayout(bottom_button_layout)
         self.project_code_input.textChanged.connect(self._update_save_button_state)
         self.description_input.textChanged.connect(self._update_save_button_state)
-        self.setFixedSize(self.sizeHint())
+
+        # Calculate and set a reduced width for the window.
+        hint = self.sizeHint()
+        self.setFixedSize(int(hint.width() * 0.9), hint.height())
+
         self.project_code_input.setFocus()
         self._update_calendar_holidays()
+
+    def _on_date_changed(self, new_date):
+        """When the date changes, re-calculate full day times if the box is checked."""
+        if self.full_day_checkbox.isChecked():
+            self._update_full_day_times()
+
+    def _on_full_day_toggled(self, state):
+        """Handles the 'Full Day' checkbox being checked or unchecked."""
+        is_checked = (state == Qt.CheckState.Checked.value)
+        self.start_time_edit.setEnabled(not is_checked)
+        self.end_time_edit.setEnabled(not is_checked)
+
+        if is_checked:
+            self.pre_full_day_start_time = self.start_time_edit.time()
+            self.pre_full_day_end_time = self.end_time_edit.time()
+            self._update_full_day_times()
+        else:
+            if self.pre_full_day_start_time:
+                self.start_time_edit.setTime(self.pre_full_day_start_time)
+            if self.pre_full_day_end_time:
+                self.end_time_edit.setTime(self.pre_full_day_end_time)
 
     def _on_copy_previous_task_toggled(self, state):
         is_checked = (state == Qt.CheckState.Checked.value)
         widgets_to_manage = [
-            self.project_code_input, self.description_input,
-            self.categories_group, self.software_group,
-            self.help_button, self.skip_button
+            self.project_code_input, self.description_input, self.categories_group,
+            self.help_button, self.skip_button,
         ]
-        if is_checked and self.previous_task:
-            self.project_code_input.setText(self.previous_task[4])
-            self.description_input.setHtml(self.previous_task[5])
-            prev_cats = self.previous_task[6].split(',') if self.previous_task[6] else []
-            for cb in self.category_checkboxes: cb.setChecked(cb.text() in prev_cats)
-            prev_sw = self.previous_task[7].split(',') if self.previous_task[7] else []
-            for cb in self.software_checkboxes: cb.setChecked(cb.text() in prev_sw)
-            for widget in widgets_to_manage: widget.setEnabled(False)
-            self.save_button.setEnabled(True)
-        else:
+        if is_checked:
+            if self.previous_task:
+                # A previous task exists, so populate the fields
+                self.project_code_input.setText(self.previous_task[4])
+                self.description_input.setHtml(self.previous_task[5])
+                prev_cats = self.previous_task[6].split(',') if self.previous_task[6] else []
+                for cb in self.category_checkboxes: cb.setChecked(cb.text() in prev_cats)
+                for widget in widgets_to_manage: widget.setEnabled(False)
+                self.save_button.setEnabled(True)
+            else:
+                # No previous task found, show a message and uncheck the box
+                QMessageBox.information(self, "No Previous Task", "No previous task was found in the database.")
+                self.same_as_prev_checkbox.blockSignals(True)
+                self.same_as_prev_checkbox.setChecked(False)
+                self.same_as_prev_checkbox.blockSignals(False)
+        else: # The box was unchecked by the user
             self.project_code_input.clear()
             self.description_input.clear()
-            for cb in self.category_checkboxes: cb.setChecked(False)
-            for cb in self.software_checkboxes: cb.setChecked(False)
+            for cb in self.category_checkboxes:
+                cb.setChecked(cb.text() == "QA83")
             for widget in widgets_to_manage: widget.setEnabled(True)
             self._update_save_button_state()
 
-    def keyPressEvent(self, event):
-        if self.description_input.hasFocus():
-            if event.matches(QKeySequence.StandardKey.Bold): self._format_bold(); return
-            if event.matches(QKeySequence.StandardKey.Italic): self._format_italic(); return
-            if event.matches(QKeySequence.StandardKey.Underline): self._format_underline(); return
-        is_ctrl_enter = (event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and
-                         event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-        if is_ctrl_enter and self.save_button.isEnabled():
-            self.save_task()
-            return
-        super().keyPressEvent(event)
-
-    def _show_notification(self, title, message):
-        if self.parent() and hasattr(self.parent(), 'tray_icon'):
-            self.parent().tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.NoIcon, 5000)
-
     def save_task(self):
-        if hasattr(self, 'countdown_timer'): self.countdown_timer.stop()
+        self._stop_countdown()
+        
+        start_qtime = self.start_time_edit.time()
+        rounded_start_qtime = QTime(start_qtime.hour(), start_qtime.minute(), 0)
+        
+        end_qtime = self.end_time_edit.time()
+        rounded_end_qtime = QTime(end_qtime.hour(), end_qtime.minute(), 0)
+
         selected_date = self.date_edit.date().toPython()
+        task_start_dt = datetime.combine(selected_date, rounded_start_qtime.toPython())
+        task_end_dt = datetime.combine(selected_date, rounded_end_qtime.toPython())
+
         date_str = selected_date.strftime("%Y-%m-%d")
         day_rules = {}
         work_times_row = self.db.get_work_times_for_date(date_str)
         if work_times_row:
-            # =====================================================================
-            # === MODIFIED SECTION START (Corrected DB indices) ===
-            # =====================================================================
-            # Indices were off by one, causing the bug. Corrected to 7 and 8.
             day_rules = {
                 'lower': work_times_row[2], 'upper': work_times_row[3],
                 'hours': work_times_row[4], 'lunch_s': work_times_row[5],
@@ -250,9 +377,6 @@ class Popup(QDialog):
                 'work_days': work_times_row[7].split(','),
                 'holidays': work_times_row[8].split(',')
             }
-            # =====================================================================
-            # === MODIFIED SECTION END ===
-            # =====================================================================
         else:
             day_rules = {
                 'lower': self.config['work_start_time_flexible']['lower'],
@@ -266,7 +390,7 @@ class Popup(QDialog):
         
         day_name = selected_date.strftime('%A')
         if date_str in day_rules['holidays'] or day_name not in day_rules['work_days']:
-            self._show_notification("Invalid Time", f"Cannot log tasks on a non-working day ({day_name}).")
+            QMessageBox.warning(self, "Invalid Time", f"Cannot log tasks on a non-working day ({day_name}).")
             return
             
         tasks = self.db.get_tasks_for_date(date_str)
@@ -288,13 +412,12 @@ class Popup(QDialog):
         work_end_dt = work_start_dt + work_dur + lunch_dur
         lunch_start_dt = datetime.combine(selected_date, lunch_s)
         lunch_end_dt = datetime.combine(selected_date, lunch_e)
-        task_start_dt = datetime.combine(selected_date, self.start_time_edit.time().toPython())
-        task_end_dt = datetime.combine(selected_date, self.end_time_edit.time().toPython())
+
         if task_end_dt <= work_start_dt or task_start_dt >= work_end_dt:
-            self._show_notification("Invalid Time", "Task is completely outside of working hours.")
+            QMessageBox.warning(self, "Invalid Time", "Task is completely outside of working hours.")
             return
         if task_start_dt >= lunch_start_dt and task_end_dt <= lunch_end_dt:
-            self._show_notification("Invalid Time", "Cannot log tasks during lunch hour.")
+            QMessageBox.warning(self, "Invalid Time", "Cannot log tasks during lunch hour.")
             return
         preliminary_slots = []
         task_start_dt = max(task_start_dt, work_start_dt)
@@ -308,13 +431,13 @@ class Popup(QDialog):
             if task_start_dt < task_end_dt:
                 preliminary_slots.append((task_start_dt, task_end_dt))
         if not preliminary_slots:
-            self._show_notification("Invalid Time", "Task has no duration after adjusting for work/lunch hours.")
+            QMessageBox.warning(self, "Invalid Time", "Task has no duration after adjusting for work/lunch hours.")
             return
         existing_tasks = self.db.get_tasks_for_date(date_str)
         project_code = self.project_code_input.text()
         description = self.description_input.toHtml()
         categories = ",".join([cb.text() for cb in self.category_checkboxes if cb.isChecked()])
-        software = ",".join([cb.text() for cb in self.software_checkboxes if cb.isChecked()])
+        software = "" # Software field is no longer used
         tasks_added = 0
         for slot_start, slot_end in preliminary_slots:
             candidate_start = slot_start
@@ -334,17 +457,201 @@ class Popup(QDialog):
         if tasks_added > 0:
             self.accept()
         else:
-            self._show_notification("Time Blocked", "The selected time is already fully occupied by other tasks.")
+            QMessageBox.warning(self, "Time Blocked", "The selected time is already fully occupied by other tasks.")
             
     def _update_save_button_state(self):
         project_code_ok = bool(self.project_code_input.text().strip())
         description_ok = bool(self.description_input.toPlainText().strip())
         self.save_button.setEnabled(project_code_ok and description_ok)
 
+    def _update_full_day_times(self):
+        """Calculates and sets the start and end times for the selected date."""
+        selected_date = self.date_edit.date().toPython()
+        boundaries = self._get_workday_boundaries_for_date(selected_date)
+        if boundaries:
+            start_dt, end_dt = boundaries
+            self.start_time_edit.setTime(QTime(start_dt.time()))
+            self.end_time_edit.setTime(QTime(end_dt.time()))
+
+    def _get_workday_end_time_for_date(self, selected_date):
+        date_str = selected_date.strftime("%Y-%m-%d")
+        
+        work_times_row = self.db.get_work_times_for_date(date_str)
+        if work_times_row:
+            day_rules = {
+                'lower': work_times_row[2], 'upper': work_times_row[3],
+                'hours': work_times_row[4], 'lunch_s': work_times_row[5],
+                'lunch_e': work_times_row[6], 
+                'work_days': work_times_row[7].split(','),
+                'holidays': work_times_row[8].split(',')
+            }
+        else:
+            day_rules = {
+                'lower': self.config['work_start_time_flexible']['lower'],
+                'upper': self.config['work_start_time_flexible']['upper'],
+                'hours': self.config['daily_working_hours'],
+                'lunch_s': self.config['lunch_hour']['start'],
+                'lunch_e': self.config['lunch_hour']['end'],
+                'work_days': self.config['working_days'],
+                'holidays': self.config['holidays']
+            }
+
+        day_name = selected_date.strftime('%A')
+        if date_str in day_rules['holidays'] or day_name not in day_rules['work_days']:
+            return None
+
+        tasks = self.db.get_tasks_for_date(date_str)
+        work_start_t = None
+        if work_times_row:
+            work_start_t = time.fromisoformat(work_times_row[1])
+        elif tasks:
+            earliest_task_t = time.fromisoformat(tasks[0][2])
+            lower_bound = time.fromisoformat(day_rules['lower'])
+            upper_bound = time.fromisoformat(day_rules['upper'])
+            work_start_t = earliest_task_t if lower_bound <= earliest_task_t <= upper_bound else upper_bound
+        else:
+            work_start_t = time.fromisoformat(day_rules['upper'])
+
+        work_start_dt = datetime.combine(selected_date, work_start_t)
+        lunch_s = time.fromisoformat(day_rules['lunch_s'])
+        lunch_e = time.fromisoformat(day_rules['lunch_e'])
+        lunch_dur = datetime.combine(selected_date, lunch_e) - datetime.combine(selected_date, lunch_s)
+        work_dur = timedelta(hours=day_rules['hours'])
+        work_end_dt = work_start_dt + work_dur + lunch_dur
+
+        return work_end_dt.time()
+
+    def _get_workday_boundaries_for_date(self, selected_date):
+        """Calculates the effective start and end datetimes for a given date."""
+        date_str = selected_date.strftime("%Y-%m-%d")
+        
+        work_times_row = self.db.get_work_times_for_date(date_str)
+        if work_times_row:
+            day_rules = {
+                'lower': work_times_row[2], 'upper': work_times_row[3],
+                'hours': work_times_row[4], 'lunch_s': work_times_row[5],
+                'lunch_e': work_times_row[6], 
+                'work_days': work_times_row[7].split(','),
+                'holidays': work_times_row[8].split(',')
+            }
+        else:
+            day_rules = {
+                'lower': self.config['work_start_time_flexible']['lower'],
+                'upper': self.config['work_start_time_flexible']['upper'],
+                'hours': self.config['daily_working_hours'],
+                'lunch_s': self.config['lunch_hour']['start'],
+                'lunch_e': self.config['lunch_hour']['end'],
+                'work_days': self.config['working_days'],
+                'holidays': self.config['holidays']
+            }
+
+        day_name = selected_date.strftime('%A')
+        if date_str in day_rules['holidays'] or day_name not in day_rules['work_days']:
+            return None
+
+        tasks = self.db.get_tasks_for_date(date_str)
+        work_start_t = None
+        if work_times_row:
+            work_start_t = time.fromisoformat(work_times_row[1])
+        elif tasks:
+            earliest_task_t = time.fromisoformat(tasks[0][2])
+            lower_bound = time.fromisoformat(day_rules['lower'])
+            upper_bound = time.fromisoformat(day_rules['upper'])
+            work_start_t = earliest_task_t if lower_bound <= earliest_task_t <= upper_bound else upper_bound
+        else:
+            work_start_t = time.fromisoformat(day_rules['upper'])
+
+        work_start_dt = datetime.combine(selected_date, work_start_t)
+        work_end_dt = work_start_dt + timedelta(hours=day_rules['hours']) + (datetime.combine(selected_date, time.fromisoformat(day_rules['lunch_e'])) - datetime.combine(selected_date, time.fromisoformat(day_rules['lunch_s'])))
+        return work_start_dt, work_end_dt
+
     def set_initial_values(self):
         self.date_edit.setDate(QDate.currentDate())
-        self.end_time_edit.setTime(QTime.currentTime())
+        now = QTime.currentTime()
+        temp_time = now.addSecs(30)
+        rounded_now = QTime(temp_time.hour(), temp_time.minute(), 0)
+
+        selected_date_obj = self.date_edit.date().toPython()
+        workday_end_time_py = self._get_workday_end_time_for_date(selected_date_obj)
+
+        final_end_time = rounded_now
+        if workday_end_time_py:
+            workday_end_qtime = QTime(workday_end_time_py.hour, workday_end_time_py.minute, workday_end_time_py.second)
+            final_end_time = min(rounded_now, workday_end_qtime)
+        
+        self.end_time_edit.setTime(final_end_time)
 
     def skip_task(self):
-        if hasattr(self, 'countdown_timer'): self.countdown_timer.stop()
+        self._stop_countdown()
         self.reject()
+
+class EditTaskPopup(Popup):
+    def __init__(self, db, config, task_data, parent=None):
+        QDialog.__init__(self, parent)
+        self.db = db
+        self.config = config
+        self.task_data = task_data
+        self.task_id = task_data[0]
+        
+        self.original_title = "Edit Task"
+        self.setWindowTitle(self.original_title)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        self.holiday_format = QTextCharFormat()
+        self.holiday_format.setForeground(QColor("red"))
+        
+        self.description_map = {}
+        
+        self.init_ui()
+        
+        self.load_task_data()
+
+        self.same_as_prev_checkbox.hide()
+        self.skip_button.hide()
+        self.save_button.setText("Save Changes")
+        self.countdown_stopped = True
+
+    def load_task_data(self):
+        """Loads the existing task data into the dialog's widgets."""
+        _, task_date, start_time, end_time, proj_code, desc, cats, soft, _, _ = self.task_data
+
+        self.date_edit.setDate(QDate.fromString(task_date, "yyyy-MM-dd"))
+        self.start_time_edit.setTime(QTime.fromString(start_time, "HH:mm:ss"))
+        self.end_time_edit.setTime(QTime.fromString(end_time, "HH:mm:ss"))
+        self.project_code_input.setText(proj_code)
+        self.description_input.setHtml(desc)
+
+        cat_list = cats.split(',') if cats else []
+        for cb in self.category_checkboxes:
+            cb.setChecked(cb.text() in cat_list)
+    
+    def save_task(self):
+        """
+        Saves the edited task using a transaction to ensure data integrity.
+        It deletes the original task and then attempts to insert the new one.
+        If the insertion fails, the entire transaction is rolled back.
+        """
+        try:
+            self.db.begin_transaction()
+
+            self.db.delete_task_by_id(self.task_id)
+
+            original_get_tasks = self.db.get_tasks_for_date
+            
+            self.db.get_tasks_for_date = lambda date_str: [
+                t for t in original_get_tasks(date_str) if t[0] != self.task_id
+            ]
+
+            super().save_task()
+
+            self.db.get_tasks_for_date = original_get_tasks
+
+            if self.isVisible():
+                self.db.rollback_transaction()
+            else:
+                self.db.commit_transaction()
+
+        except Exception as e:
+            self.db.rollback_transaction()
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
+            if 'original_get_tasks' in locals():
+                 self.db.get_tasks_for_date = original_get_tasks

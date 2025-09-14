@@ -8,8 +8,9 @@
         "start": "12:30:00",
         "end": "13:30:00"
     },
-    "popup_interval_minutes": 60,
+    "popup_interval_minutes": 30,
     "popup_autoclose_minutes": 1,
+    "show_schedule_notification": true,
     "working_days": [
         "Monday",
         "Tuesday",
@@ -17,6 +18,17 @@
         "Thursday",
         "Friday"
     ],
+    "reminders": {
+        "previous_day_workload_enabled": true,
+        "weekly_timesheet_enabled": true,
+        "weekly_timesheet_day": "Monday",
+        "monthly_claims_enabled": true,
+        "monthly_claims_day": 15,
+        "monthly_timesheet_enabled": true,
+        "monthly_timesheet_day": 28,
+        "reminder_offset_hours_start": 1.0,
+        "reminder_offset_hours_end": 1.0
+    },
     "project_categories": [
         "QA83",
         "Travel"
@@ -40,5 +52,6 @@
         "0008 : ISO",
         "0009 : External Training",
         "0010 : Internal Training"
-    ]
+    ],
+    "max_backups_to_keep": 5
 }
