@@ -41,7 +41,6 @@ class SettingsWindow(QDialog):
         # =====================================================================
         self.holidays = QTextEdit()
         self.categories = QTextEdit()
-        self.software = QTextEdit()
         self.side_description = QTextEdit()
 
         day_checkbox_layout = QHBoxLayout()
@@ -68,8 +67,6 @@ class SettingsWindow(QDialog):
         self.holidays.setFixedHeight(100)
         self.categories.setPlaceholderText("One category per line")
         self.categories.setFixedHeight(100)
-        self.software.setPlaceholderText("One software name per line")
-        self.software.setFixedHeight(100)
         self.side_description.setPlaceholderText("One line per entry for the 'Additional Codes' popup.")
         self.side_description.setFixedHeight(100)
         
@@ -93,7 +90,6 @@ class SettingsWindow(QDialog):
         form_layout.addRow("Working Days:", day_checkbox_layout)
         form_layout.addRow("Holidays (YYYY-MM-DD):", self.holidays)
         form_layout.addRow("Project Categories:", self.categories)
-        form_layout.addRow("Software Used:", self.software)
         form_layout.addRow("Additional Codes:", self.side_description)
         main_layout.addLayout(form_layout)
 
@@ -140,7 +136,6 @@ class SettingsWindow(QDialog):
                 checkbox.setChecked(checkbox.text() in saved_working_days)
             self.holidays.setText("\n".join(holidays_list))
             self.categories.setText("\n".join(self.config['project_categories']))
-            self.software.setText("\n".join(self.config['software_used']))
             self.side_description.setText("\n".join(self.config.get('side_description', [])))
         except (FileNotFoundError, KeyError) as e:
             QMessageBox.critical(self, "Error", f"Could not load configuration files: {e}")
@@ -184,7 +179,6 @@ class SettingsWindow(QDialog):
             return [line.strip() for line in widget.toPlainText().splitlines() if line.strip()]
 
         self.config['project_categories'] = text_to_list(self.categories)
-        self.config['software_used'] = text_to_list(self.software)
         self.config['side_description'] = self.side_description.toPlainText().splitlines()
         
         try:

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QGroupBox, QGridLayout, QCalendarWidget, QHeaderView,
                              QAbstractItemView, QLineEdit, QFormLayout, QComboBox,
                              QTextEdit, QMessageBox, QFileDialog, QListWidget, QListWidgetItem,
-                             QCheckBox)
+                             QCheckBox, QSizePolicy)
 from PySide6.QtCore import Qt, QDate, QUrl, QEvent, QTimer, QStandardPaths
 from PySide6.QtGui import QTextDocument, QIntValidator, QKeySequence, QDesktopServices, QFont
 from datetime import datetime, time
@@ -373,6 +373,10 @@ class QA83Tab(QWidget):
         self.table = CopyableTableWidget(); self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers); self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows) 
         self.table.setStyleSheet("QTableWidget::item:selected { background-color: #447ED0; color: white; }"); header = self.table.horizontalHeader(); header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents); header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents); header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch); header.setHighlightSections(False)
         main_layout.addWidget(self.table); button_layout = QHBoxLayout()
+        
+        # This ensures that row heights automatically adjust to fit their content.
+        # Setting this to Interactive allows the user to manually resize rows.
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
         self.unassign_qa83_button = QPushButton("Unassign QA83")
         self.unassign_qa83_button.clicked.connect(self._unassign_qa83_tag)
@@ -694,7 +698,16 @@ class QA83Tab(QWidget):
         group_id_map = {v['original_key']: k for k, v in task_groups.items()}
 
         for proj_code, groups_in_project in projects_data.items():
-            start_row_for_span = current_row; title = self.db.get_project_title(proj_code) or ""; self.table.setItem(current_row, 0, QTableWidgetItem(proj_code)); self.table.setItem(current_row, 1, QTableWidgetItem(title))
+            start_row_for_span = current_row
+            title = self.db.get_project_title(proj_code) or ""
+            
+            proj_code_item = QTableWidgetItem(proj_code)
+            proj_code_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            self.table.setItem(current_row, 0, proj_code_item)
+
+            title_item = QTableWidgetItem(title)
+            title_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            self.table.setItem(current_row, 1, title_item)
             for group in groups_in_project:
                 desc_item = QTableWidgetItem()
                 
@@ -707,7 +720,9 @@ class QA83Tab(QWidget):
                 self.table.setItem(current_row, 2, desc_item)
                 desc_label = QLabel(group["description"])
                 desc_label.setTextFormat(Qt.TextFormat.RichText)
-                desc_label.setWordWrap(True); desc_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft); self.table.setCellWidget(current_row, 2, desc_label)
+                desc_label.setWordWrap(True)
+                desc_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+                self.table.setCellWidget(current_row, 2, desc_label)
                 weekly_hours = [0.0] * num_weeks; total_hours = 0.0
                 for task in group["tasks"]:
                     day = datetime.strptime(task[1], '%Y-%m-%d').day; week_idx = day_to_week_map.get(day)

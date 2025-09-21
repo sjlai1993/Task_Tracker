@@ -115,42 +115,34 @@ class TravelTab(QWidget):
         cal_layout.addWidget(calendar)
         calendar_dialog.exec()
 
-    def _group_consecutive_tasks(self, tasks):
-        """Groups consecutive tasks with the same date, project, and description."""
+    def _group_tasks_for_display(self, tasks):
+        """
+        Groups tasks by date, project, and description, returning only the first
+        entry for each group. This handles cases where a single logical task is
+        split into multiple database entries (e.g., split by a lunch break).
+        """
         if not tasks:
             return []
 
-        grouped_tasks = []
-        # The tasks are already sorted by date and start time from the DB query.
-        current_group = [tasks[0]]
-
-        for i in range(1, len(tasks)):
-            prev_task = current_group[-1]
-            current_task = tasks[i]
-
-            # Grouping criteria: same day, same project code, same description
-            is_same_group = (
-                current_task[1] == prev_task[1] and  # task_date
-                current_task[4] == prev_task[4] and  # project_code
-                current_task[5] == prev_task[5]      # description
-            )
-
-            # Consecutiveness criteria: current task starts exactly where the previous one ended
-            try:
-                prev_end_time = time.fromisoformat(prev_task[3])
-                current_start_time = time.fromisoformat(current_task[2])
-                is_consecutive = (prev_end_time == current_start_time)
-            except ValueError:
-                is_consecutive = False
-
-            if is_same_group and is_consecutive:
-                current_group.append(current_task)
-            else:
-                grouped_tasks.append(current_group[0]) # Add the representative task of the completed group
-                current_group = [current_task]
+        # The tasks list is pre-sorted by date and start time from the database query.
+        # We use a set to keep track of the groups we've already added.
+        # A group is uniquely identified by (date, project_code, description).
         
-        grouped_tasks.append(current_group[0]) # Add the last group's representative task
-        return grouped_tasks
+        unique_groups = set()
+        display_tasks = []
+
+        for task in tasks:
+            group_key = (
+                task[1],  # task_date
+                task[4],  # project_code
+                task[5]   # description
+            )
+            
+            if group_key not in unique_groups:
+                display_tasks.append(task)
+                unique_groups.add(group_key)
+                
+        return display_tasks
 
     def update_travel_view(self):
         self.month_label.setText(self.view_date.strftime('%B %Y'))
@@ -175,7 +167,7 @@ class TravelTab(QWidget):
             current_date += timedelta(days=1)
 
         # Group the collected tasks before displaying them
-        display_tasks = self._group_consecutive_tasks(travel_tasks)
+        display_tasks = self._group_tasks_for_display(travel_tasks)
 
         self.table.setRowCount(len(display_tasks))
         for row, task in enumerate(display_tasks):

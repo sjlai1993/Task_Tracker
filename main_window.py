@@ -22,7 +22,7 @@ from travel_tab import TravelTab
 from qa83_tab import QA83Tab
 
 class MainWindow(QMainWindow):
-    APP_VERSION = "0.0.0"
+    APP_VERSION = "0.0.1"
     HOLIDAY_FILE = 'holiday.json'
     DB_FILE = 'task_tracker.db'
     BACKUP_DIR = 'backups'
@@ -216,6 +216,13 @@ class MainWindow(QMainWindow):
         elif current_widget == self.travel_tab:
             self.travel_tab.update_travel_view()
     
+    def _refresh_all_tabs(self):
+        """Refreshes the data views in all relevant tabs."""
+        self.general_tab.update_task_view()
+        self.timesheet_tab.update_timesheet_view()
+        self.travel_tab.update_travel_view()
+        self.qa83_tab.update_qa83_view()
+
     def _show_about_dialog(self):
         about_dialog = AboutWindow(version=self.APP_VERSION, parent=self)
         about_dialog.exec()
@@ -377,6 +384,9 @@ class MainWindow(QMainWindow):
         # Explicitly add a popup at the start of the lunch hour.
         schedule_candidates.add(lunch_start_dt)
 
+        # Start the loop from the next interval to avoid a popup at the exact start time.
+        next_popup_time += interval
+
         while next_popup_time < workday_end_time:
             if next_popup_time < lunch_start_dt or next_popup_time >= lunch_start_dt + lunch_dur:
                  schedule_candidates.add(next_popup_time)
@@ -437,8 +447,20 @@ class MainWindow(QMainWindow):
             today_str = scheduled_time.strftime("%Y-%m-%d")
             try:
                 current_index = self.popup_schedule.index(scheduled_time)
-                if current_index > 0:
+                
+                slot_start_dt = None
+                # For the first popup, the slot starts at the beginning of the workday.
+                if current_index == 0:
+                    work_times_row = self.db.get_work_times_for_date(today_str)
+                    if work_times_row:
+                        effective_start_time = datetime.strptime(f"{today_str} {work_times_row[1]}", "%Y-%m-%d %H:%M:%S")
+                        slot_start_dt = effective_start_time
+                # For subsequent popups, the slot starts at the time of the previous popup.
+                else:
                     slot_start_dt = self.popup_schedule[current_index - 1]
+
+                # If we have a valid slot to check...
+                if slot_start_dt:
                     slot_end_dt = scheduled_time
 
                     # Check if this slot is fully occupied
@@ -448,10 +470,8 @@ class MainWindow(QMainWindow):
                     for task in tasks_today:
                         task_start = datetime.combine(scheduled_time.date(), time.fromisoformat(task[2]))
                         task_end = datetime.combine(scheduled_time.date(), time.fromisoformat(task[3]))
-                        
                         overlap_start = max(slot_start_dt, task_start)
                         overlap_end = min(slot_end_dt, task_end)
-                        
                         if overlap_end > overlap_start:
                             uncovered_duration_sec -= (overlap_end - overlap_start).total_seconds()
 
@@ -471,7 +491,7 @@ class MainWindow(QMainWindow):
         popup.start_time_edit.setTime(start_time)
         result = popup.exec()
         if result == QDialog.DialogCode.Accepted:
-            self.general_tab.update_task_view()
+            self._refresh_all_tabs()
         elif result == QDialog.DialogCode.Rejected:
             next_time = self.get_next_popup_time()
             if next_time:
@@ -512,7 +532,7 @@ class MainWindow(QMainWindow):
             popup.start_time_edit.setTime(calculated_start_time)
         
         if popup.exec() == QDialog.DialogCode.Accepted:
-            self.general_tab.update_task_view()
+            self._refresh_all_tabs()
             
     def popup_from_copied_task(self, copied_task_data):
         today = datetime.now().date()
@@ -535,7 +555,7 @@ class MainWindow(QMainWindow):
             cb.setChecked(cb.text() in cat_list)
 
         if popup.exec() == QDialog.DialogCode.Accepted:
-            self.general_tab.update_task_view()
+            self._refresh_all_tabs()
             
     def determine_start_time_for_date(self, target_date):
         date_str = target_date.strftime('%Y-%m-%d')

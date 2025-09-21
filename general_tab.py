@@ -1,14 +1,27 @@
 # general_tab.py
 
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QListWidget, QListWidgetItem, QDateEdit,
-                             QGroupBox, QGridLayout, QCalendarWidget, QStyle,
-                             QApplication, QMessageBox, QSystemTrayIcon, QDialog, QMenu,
-                             QTimeEdit, QDialogButtonBox, QListWidget)
-from PySide6.QtCore import Qt, QSize, QDate, QTime, QEvent
-from PySide6.QtGui import QColor, QTextCharFormat, QTextDocument, QAction
+import re
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QDateEdit,
+                             QGroupBox, QGridLayout, QCalendarWidget, QStyle, QApplication,
+                             QMessageBox, QSystemTrayIcon, QDialog, QMenu, QTimeEdit,
+                             QDialogButtonBox, QAbstractItemView, QTableWidget, QTableWidgetItem, QHeaderView,
+                             QAbstractScrollArea)
+from PySide6.QtCore import Qt, QDate, QTime, QEvent
+from PySide6.QtGui import QColor, QTextCharFormat, QTextDocument, QAction, QFont
 from datetime import datetime, time, timedelta
 from popup import EditTaskPopup
+
+class NoWheelFocusTableWidget(QTableWidget):
+    """
+    A custom QTableWidget that prevents the focus from changing when scrolling
+    with the mouse wheel. This provides a smooth scroll without the distracting
+    highlighting of different cells.
+    """
+    def wheelEvent(self, event):
+        # We want to handle the scrolling action but prevent the default behavior
+        # of changing the focused/current item. We achieve this by calling the
+        # wheelEvent of QAbstractScrollArea, bypassing the item view's logic.
+        QAbstractScrollArea.wheelEvent(self, event)
 
 class GeneralTab(QWidget):
     def __init__(self, parent, db, config):
@@ -45,13 +58,41 @@ class GeneralTab(QWidget):
         nav_layout.addWidget(self.next_button, 0, 2)
         nav_layout.setColumnStretch(1, 1)
         layout.addWidget(nav_group)
-        self.task_list_widget = QListWidget()
-        self.task_list_widget.setIconSize(QSize(0, 0))
-        self.task_list_widget.setWordWrap(True)
-        self.task_list_widget.viewport().installEventFilter(self)
-        self.task_list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.task_list_widget.customContextMenuRequested.connect(self._show_context_menu)
-        layout.addWidget(self.task_list_widget)
+        
+        # --- MODIFICATION: Use QTableWidget instead of QListWidget ---
+        self.task_table = NoWheelFocusTableWidget()
+        self.task_table.setColumnCount(3)
+        self.task_table.setHorizontalHeaderLabels(["Time", "Project", "Description"])
+        self.task_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.task_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.task_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.task_table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+
+        self.task_table.setShowGrid(False)
+        self.task_table.verticalHeader().hide()
+        
+        # Set a stylesheet to ensure selection has square corners and consistent color.
+        self.task_table.setStyleSheet("""
+            QTableWidget::item:selected {
+                background-color: #447ED0;
+                color: white;
+            }
+            QTableWidget::item:focus {
+                background-color: #447ED0;
+                color: white;
+            }
+        """)
+        header = self.task_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setHighlightSections(False)
+
+        self.task_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.task_table.customContextMenuRequested.connect(self._show_context_menu)
+        self.task_table.cellDoubleClicked.connect(self._on_item_double_clicked)
+        layout.addWidget(self.task_table)
+        # --- END MODIFICATION ---
 
         button_layout = QHBoxLayout()
         self.copy_button = QPushButton("Duplicate Task")
@@ -82,44 +123,47 @@ class GeneralTab(QWidget):
         
         layout.addLayout(button_layout)
 
-        self.task_list_widget.itemSelectionChanged.connect(self._update_button_states)
+        self.task_table.itemSelectionChanged.connect(self._update_button_states)
         self._update_button_states()
 
     def eventFilter(self, source, event):
         """
-        Filters events to capture left-button double-clicks on the task list,
-        ignoring double-clicks from other buttons.
+        This is no longer needed for double-click, but is kept in case it's
+        used for other purposes in the future.
         """
-        if source is self.task_list_widget.viewport() and event.type() == QEvent.Type.MouseButtonDblClick:
-            if event.button() == Qt.MouseButton.LeftButton:
-                item = self.task_list_widget.itemAt(event.pos())
-                if item:
-                    self._on_item_double_clicked(item)
-                    return True # Event was handled
         return super().eventFilter(source, event)
 
     def _show_context_menu(self, position):
         """Creates and shows a context-sensitive menu on right-click."""
-        item = self.task_list_widget.itemAt(position)
-        menu = QMenu(self.task_list_widget)
+        item = self.task_table.itemAt(position)
+        if not item:
+            # If clicking on empty space, show a generic log menu
+            menu = QMenu(self.task_table)
+            log_action = QAction("Log Task", self)
+            log_action.triggered.connect(self.parent_window.manual_popup)
+            menu.addAction(log_action)
+            menu.exec(self.task_table.viewport().mapToGlobal(position))
+            return
 
-        task_data = item.data(Qt.ItemDataRole.UserRole) if item else None
-        unrecorded_slot_data = item.data(Qt.ItemDataRole.UserRole + 1) if item else None
+        row = item.row()
+        # Retrieve data from the first column's item for that row
+        data_item = self.task_table.item(row, 0)
+        if not data_item: return
+
+        menu = QMenu(self.task_table)
+        task_data = data_item.data(Qt.ItemDataRole.UserRole)
+        unrecorded_slot_data = data_item.data(Qt.ItemDataRole.UserRole + 1)
 
         # --- Log Task Action ---
         log_action = QAction("Log Task", self)
         if unrecorded_slot_data:
-            # If right-clicking an unrecorded slot, log for that specific slot
             log_action.triggered.connect(lambda: self._log_unrecorded_slot(unrecorded_slot_data))
         else:
-            # Generic log task action
             log_action.triggered.connect(self.parent_window.manual_popup)
         menu.addAction(log_action)
 
         # --- Actions for Recorded Tasks ---
         if task_data:
-            #menu.addSeparator()
-
             edit_action = QAction("Edit Task", self)
             edit_action.triggered.connect(lambda: self._edit_task(task_data[0]))
             menu.addAction(edit_action)
@@ -132,14 +176,17 @@ class GeneralTab(QWidget):
             copy_action.triggered.connect(lambda: self.parent_window.popup_from_copied_task(task_data))
             menu.addAction(copy_action)
 
-        menu.exec(self.task_list_widget.viewport().mapToGlobal(position))
+        menu.exec(self.task_table.viewport().mapToGlobal(position))
 
     def _log_unrecorded_slot(self, unrecorded_slot_data):
         """Helper function to trigger the log popup for a specific unrecorded slot."""
         start_dt, end_dt = unrecorded_slot_data
         has_subsequent_task = False
-        for i in range(self.task_list_widget.count()):
-            item = self.task_list_widget.item(i)
+        
+        # Check if there's a task immediately following this slot
+        for i in range(self.task_table.rowCount()):
+            item = self.task_table.item(i, 0)
+            if not item: continue
             task_data = item.data(Qt.ItemDataRole.UserRole)
             if task_data and time.fromisoformat(task_data[2]) == end_dt.time():
                 has_subsequent_task = True
@@ -249,25 +296,14 @@ class GeneralTab(QWidget):
         self.view_date += timedelta(days=1)
         self.update_task_view()
 
-    def _create_item_widget(self, rich_text):
-        item_widget = QWidget()
-        main_layout = QHBoxLayout(item_widget)
-        main_layout.setContentsMargins(5, 5, 5, 5)
-        main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        label = QLabel(rich_text)
-        label.setWordWrap(True)
-        label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        main_layout.addWidget(label, 1)
-
-        return item_widget
-
     def _update_button_states(self):
-        selected_items = self.task_list_widget.selectedItems()
+        selected_items = self.task_table.selectedItems()
         is_task_selected = False
-        if len(selected_items) == 1:
-            item = selected_items[0]
-            if item.data(Qt.ItemDataRole.UserRole):
+        if selected_items:
+            # Check the data of the item in the first column of the selected row
+            row = selected_items[0].row()
+            item = self.task_table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole):
                 is_task_selected = True
         
         self.copy_button.setEnabled(is_task_selected)
@@ -275,16 +311,27 @@ class GeneralTab(QWidget):
         self.delete_button.setEnabled(is_task_selected)
 
     def _get_selected_task_data(self):
-        selected_items = self.task_list_widget.selectedItems()
-        if not selected_items:
+        selected_rows = self.task_table.selectionModel().selectedRows()
+        if not selected_rows:
             return None
-        return selected_items[0].data(Qt.ItemDataRole.UserRole)
+        
+        # Get the item from the first column of the selected row
+        item = self.task_table.item(selected_rows[0].row(), 0)
+        if not item:
+            return None
+            
+        return item.data(Qt.ItemDataRole.UserRole)
     
     def _get_selected_unrecorded_slot_data(self):
-        selected_items = self.task_list_widget.selectedItems()
-        if not selected_items:
+        selected_rows = self.task_table.selectionModel().selectedRows()
+        if not selected_rows:
             return None
-        return selected_items[0].data(Qt.ItemDataRole.UserRole + 1)
+            
+        item = self.task_table.item(selected_rows[0].row(), 0)
+        if not item:
+            return None
+            
+        return item.data(Qt.ItemDataRole.UserRole + 1)
 
     def _on_log_task_clicked(self):
         unrecorded_slot_data = self._get_selected_unrecorded_slot_data()
@@ -292,8 +339,9 @@ class GeneralTab(QWidget):
             start_dt, end_dt = unrecorded_slot_data
             
             has_subsequent_task = False
-            for i in range(self.task_list_widget.count()):
-                item = self.task_list_widget.item(i)
+            for i in range(self.task_table.rowCount()):
+                item = self.task_table.item(i, 0)
+                if not item: continue
                 task_data = item.data(Qt.ItemDataRole.UserRole)
                 if task_data:
                     task_start_time = time.fromisoformat(task_data[2])
@@ -309,13 +357,15 @@ class GeneralTab(QWidget):
         else:
             self.parent_window.manual_popup()
 
-    def _on_item_double_clicked(self, item):
-        """Handles double-clicking on an item in the task list."""
+    def _on_item_double_clicked(self, row, column):
+        """Handles double-clicking on a cell in the task table."""
+        item = self.task_table.item(row, 0) # Always get data from the first column
+        if not item: return
+
         task_data = item.data(Qt.ItemDataRole.UserRole)
         unrecorded_slot_data = item.data(Qt.ItemDataRole.UserRole + 1)
 
         if task_data:
-            # It's a recorded task, open the edit popup.
             self._edit_task(task_data[0])
         elif unrecorded_slot_data:
             self._log_unrecorded_slot(unrecorded_slot_data)
@@ -343,55 +393,88 @@ class GeneralTab(QWidget):
 
         edit_popup = EditTaskPopup(self.db, self.config, task_data, parent=self)
         if edit_popup.exec() == QDialog.DialogCode.Accepted:
-            self.update_task_view()
-            if hasattr(self.parent_window, 'qa83_tab'):
-                self.parent_window.qa83_tab.update_qa83_view()
+            self.parent_window._refresh_all_tabs()
 
     def _copy_task_to_new_popup(self, task_data):
         self.parent_window.popup_from_copied_task(task_data)
 
     def _add_recorded_task_item(self, task, is_day_off):
+        row = self.task_table.rowCount()
+        self.task_table.insertRow(row)
+
         start_dt = datetime.combine(self.view_date, time.fromisoformat(task[2]))
         end_dt = datetime.combine(self.view_date, time.fromisoformat(task[3]))
         project_code = task[4]
-        description_html = task[5]
+        description_html = task[5] or ""
+
+        # The description is saved as HTML with <p> tags, which are block-level
+        # elements. When the text wraps, these blocks add vertical margins that
+        # make the row height incorrect. To fix this, we extract the inner content
+        # of each <p> tag and join them with <br> (line break) tags. This preserves
+        # inline formatting (like bold) while removing the problematic block layout.
+        temp_doc = QTextDocument()
+        temp_doc.setHtml(description_html)
+        if not temp_doc.toPlainText().strip():
+            cleaned_description_html = ""
+        else:
+            # Find all content within the <p>...</p> tags.
+            p_contents = re.findall(r'<p[^>]*>(.*?)</p>', description_html, re.DOTALL)
+            # Join the contents with a line break. This handles multi-paragraph descriptions.
+            cleaned_description_html = "<br>".join(p_contents)
         
         duration_hours = (end_dt - start_dt).total_seconds() / 3600
-        start_str = start_dt.strftime("%H:%M")
-        end_str = end_dt.strftime("%H:%M")
-        rich_text = (f"<b>{start_str} - {end_str} ({duration_hours:.2f}h)</b>"
-                     f" | <b>{project_code}</b> | {description_html}")
+        time_str = f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')} ({duration_hours:.2f}h)"
         
-        widget = self._create_item_widget(rich_text)
-        
-        item = QListWidgetItem()
-        item.setData(Qt.ItemDataRole.UserRole, task)
-        item.setSizeHint(widget.sizeHint())
-        self.task_list_widget.addItem(item)
-        self.task_list_widget.setItemWidget(item, widget)
+        # Time Item
+        time_item = QTableWidgetItem(time_str)
+        time_item.setData(Qt.ItemDataRole.UserRole, task) # Store task data here
+        time_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.task_table.setItem(row, 0, time_item)
+
+        # Project Item
+        project_item = QTableWidgetItem(project_code)
+        project_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.task_table.setItem(row, 1, project_item)
+
+        # Description Item (as a widget for proper wrapping)
+        desc_label = QLabel(cleaned_description_html)
+        desc_label.setWordWrap(False)
+        desc_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        desc_label.setContentsMargins(4, 4, 4, 4) # Add some padding
+        self.task_table.setCellWidget(row, 2, desc_label)
 
     def _add_unrecorded_task_item(self, start_dt, end_dt, is_day_off):
-        duration_hours = (end_dt - start_dt).total_seconds() / 3600
-        start_str = start_dt.strftime("%H:%M")
-        end_str = end_dt.strftime("%H:%M")
-        rich_text = (f"<b>{start_str} - {end_str} ({duration_hours:.2f}h)</b>"
-                     f" | <b>---</b> | <i>Unrecorded</i>")
-                     
-        widget = self._create_item_widget(rich_text)
+        row = self.task_table.rowCount()
+        self.task_table.insertRow(row)
 
-        item = QListWidgetItem()
-        item.setData(Qt.ItemDataRole.UserRole, None) 
-        item.setData(Qt.ItemDataRole.UserRole + 1, (start_dt, end_dt)) 
-        item.setSizeHint(widget.sizeHint())
-        self.task_list_widget.addItem(item)
-        self.task_list_widget.setItemWidget(item, widget)
+        duration_hours = (end_dt - start_dt).total_seconds() / 3600
+        time_str = f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')} ({duration_hours:.2f}h)"
+        
+        # Time Item
+        time_item = QTableWidgetItem(time_str)
+        time_item.setData(Qt.ItemDataRole.UserRole, None) 
+        time_item.setData(Qt.ItemDataRole.UserRole + 1, (start_dt, end_dt)) # Store slot data
+        time_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.task_table.setItem(row, 0, time_item)
+
+        # Project Item
+        project_item = QTableWidgetItem("---")
+        project_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.task_table.setItem(row, 1, project_item)
+
+        # Description Item
+        desc_item = QTableWidgetItem("Unrecorded")
+        desc_item.setFont(QFont("Segoe UI", 9, italic=True))
+        desc_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.task_table.setItem(row, 2, desc_item)
 
     def update_task_view(self):
         self.date_picker.blockSignals(True)
         self.date_picker.setDate(QDate(self.view_date))
         self.date_picker.blockSignals(False)
         self._update_calendar_holidays()
-        self.task_list_widget.clear()
+        
+        self.task_table.setRowCount(0) # Clear the table
 
         date_str = self.view_date.strftime("%Y-%m-%d")
         day_name = self.view_date.strftime('%A')
@@ -418,10 +501,23 @@ class GeneralTab(QWidget):
             }
 
         if date_str in day_rules['holidays']:
-            self.task_list_widget.addItem("Public Holiday"); is_day_off = True
-        if day_name not in day_rules['work_days']:
-            self.task_list_widget.addItem(f"Not a working day ({day_name})"); is_day_off = True
-        if is_day_off: return
+            self.task_table.setRowCount(1)
+            self.task_table.setSpan(0, 0, 1, 3)
+            msg_item = QTableWidgetItem("Public Holiday")
+            msg_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.task_table.setItem(0, 0, msg_item)
+            is_day_off = True
+        elif day_name not in day_rules['work_days']:
+            self.task_table.setRowCount(1)
+            self.task_table.setSpan(0, 0, 1, 3)
+            msg_item = QTableWidgetItem(f"Not a working day ({day_name})")
+            msg_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.task_table.setItem(0, 0, msg_item)
+            is_day_off = True
+        
+        if is_day_off:
+            self.task_table.resizeRowsToContents()
+            return
 
         tasks = self.db.get_tasks_for_date(date_str)
         work_start_t = None
@@ -448,7 +544,9 @@ class GeneralTab(QWidget):
             if work_start_dt < work_end_dt:
                 self._add_unrecorded_slots(work_start_dt, work_end_dt, lunch_start_dt, lunch_end_dt, is_day_off)
             else:
-                 self.task_list_widget.addItem("No tasks saved for this day.")
+                 self.task_table.setRowCount(1)
+                 self.task_table.setItem(0, 0, QTableWidgetItem("No tasks saved for this day."))
+            self.task_table.resizeRowsToContents()
             return
 
         timeline_cursor = work_start_dt
@@ -464,6 +562,8 @@ class GeneralTab(QWidget):
 
         if timeline_cursor < work_end_dt:
             self._add_unrecorded_slots(timeline_cursor, work_end_dt, lunch_start_dt, lunch_end_dt, is_day_off)
+        
+        self.task_table.resizeRowsToContents()
 
     def _add_unrecorded_slots(self, start_dt, end_dt, lunch_start_dt, lunch_end_dt, is_day_off):
         pre_lunch_end = min(end_dt, lunch_start_dt)

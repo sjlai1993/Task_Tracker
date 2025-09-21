@@ -72,6 +72,15 @@ class Popup(QDialog):
                 self.move(x, y)
                 self._initial_pos_set = True
 
+    def exec(self):
+        """
+        Overrides the default exec() to ensure the window is activated and
+        brought to the front before being shown as a modal dialog.
+        """
+        self.activateWindow()
+        self.raise_()
+        return super().exec()
+
     def _stop_countdown(self):
         if not self.countdown_stopped and hasattr(self, 'countdown_timer') and self.countdown_timer.isActive():
             self.countdown_timer.stop()
@@ -255,6 +264,7 @@ class Popup(QDialog):
         right_input_layout = QVBoxLayout()
         right_input_layout.addWidget(QLabel("Task Description"))
         self.description_input = QTextEdit()
+        self.description_input.setTabChangesFocus(True)
         right_input_layout.addWidget(self.description_input)
 
         input_area_layout.addLayout(left_input_layout, 0)
@@ -277,8 +287,6 @@ class Popup(QDialog):
         self.help_button.clicked.connect(self.show_help_message)
         self.help_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         bottom_button_layout.addWidget(self.help_button)
-        hint_label = QLabel("<i>Ctrl+⏎ to save.</i>")
-        bottom_button_layout.addWidget(hint_label)
         bottom_button_layout.addStretch()
         self.skip_button = QPushButton("Skip")
         self.skip_button.setToolTip("Close the popup without saving")
@@ -286,11 +294,11 @@ class Popup(QDialog):
         self.skip_button.setAutoDefault(False)
         #self.skip_button.setStyleSheet("color: red;")
         bottom_button_layout.addWidget(self.skip_button)
-        self.save_button = QPushButton("Save Task")
-        self.save_button.setToolTip("Save the current task (Ctrl+Enter)")
+        self.save_button = QPushButton("Save Task (Ctrl+⏎)")
+        self.save_button.setToolTip("Save the current task (Ctrl+⏎)")
         self.save_button.clicked.connect(self.save_task)
         self.save_button.setEnabled(False)
-        self.save_button.setAutoDefault(False)
+        self.save_button.setDefault(True)
         bottom_button_layout.addWidget(self.save_button)
         main_layout.addLayout(bottom_button_layout)
         self.project_code_input.textChanged.connect(self._update_save_button_state)
@@ -299,6 +307,11 @@ class Popup(QDialog):
         # Calculate and set a reduced width for the window.
         hint = self.sizeHint()
         self.setFixedSize(int(hint.width() * 0.9), hint.height())
+
+        # Set custom tab order for a more intuitive workflow.
+        # project code -> description -> save button
+        self.setTabOrder(self.project_code_input, self.description_input)
+        self.setTabOrder(self.description_input, self.save_button)
 
         self.project_code_input.setFocus()
         self._update_calendar_holidays()
@@ -587,27 +600,28 @@ class Popup(QDialog):
 
 class EditTaskPopup(Popup):
     def __init__(self, db, config, task_data, parent=None):
-        QDialog.__init__(self, parent)
-        self.db = db
-        self.config = config
+        # Call the parent constructor. This will initialize the UI, set initial values,
+        # and crucially, install the event filters that handle Ctrl+B/I/U.
+        # We pass previous_task=None as it's not relevant for editing, and
+        # is_manual_trigger=True to disable the countdown timer.
+        super().__init__(db=db, previous_task=None, config=config, parent=parent, is_manual_trigger=True)
+
+        # Store task-specific data
         self.task_data = task_data
         self.task_id = task_data[0]
         
+        # Override the title set by the parent
         self.original_title = "Edit Task"
         self.setWindowTitle(self.original_title)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-        self.holiday_format = QTextCharFormat()
-        self.holiday_format.setForeground(QColor("red"))
         
-        self.description_map = {}
-        
-        self.init_ui()
-        
+        # The parent's __init__ called init_ui() and set_initial_values().
+        # Now we load the actual task data, overwriting the initial values.
         self.load_task_data()
 
+        # Hide/modify widgets that are not needed for editing
         self.same_as_prev_checkbox.hide()
         self.skip_button.hide()
-        self.save_button.setText("Save Changes")
+        self.save_button.setText("Save Changes (Ctrl+⏎)")
         self.countdown_stopped = True
 
     def load_task_data(self):
@@ -625,33 +639,43 @@ class EditTaskPopup(Popup):
             cb.setChecked(cb.text() in cat_list)
     
     def save_task(self):
-        """
-        Saves the edited task using a transaction to ensure data integrity.
-        It deletes the original task and then attempts to insert the new one.
-        If the insertion fails, the entire transaction is rolled back.
-        """
-        try:
-            self.db.begin_transaction()
+        """Saves the changes to the existing task after validation."""
+        self._stop_countdown()
 
-            self.db.delete_task_by_id(self.task_id)
+        start_qtime = self.start_time_edit.time()
+        end_qtime = self.end_time_edit.time()
+        project_code = self.project_code_input.text().strip()
+        description = self.description_input.toHtml()
+        categories = ",".join([cb.text() for cb in self.category_checkboxes if cb.isChecked()])
 
-            original_get_tasks = self.db.get_tasks_for_date
-            
-            self.db.get_tasks_for_date = lambda date_str: [
-                t for t in original_get_tasks(date_str) if t[0] != self.task_id
-            ]
+        if not project_code or not self.description_input.toPlainText().strip():
+            QMessageBox.warning(self, "Input Error", "Project Code and Description cannot be empty.")
+            return
 
-            super().save_task()
+        if end_qtime <= start_qtime:
+            QMessageBox.warning(self, "Invalid Time", "End time must be after start time.")
+            return
 
-            self.db.get_tasks_for_date = original_get_tasks
+        selected_date = self.date_edit.date().toPython()
+        date_str = selected_date.strftime("%Y-%m-%d")
+        
+        other_tasks = [t for t in self.db.get_tasks_for_date(date_str) if t[0] != self.task_id]
 
-            if self.isVisible():
-                self.db.rollback_transaction()
-            else:
-                self.db.commit_transaction()
+        new_start_dt = datetime.combine(selected_date, start_qtime.toPython())
+        new_end_dt = datetime.combine(selected_date, end_qtime.toPython())
 
-        except Exception as e:
-            self.db.rollback_transaction()
-            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
-            if 'original_get_tasks' in locals():
-                 self.db.get_tasks_for_date = original_get_tasks
+        for task_row in other_tasks:
+            existing_start = datetime.combine(selected_date, time.fromisoformat(task_row[2]))
+            existing_end = datetime.combine(selected_date, time.fromisoformat(task_row[3]))
+            if new_start_dt < existing_end and new_end_dt > existing_start:
+                QMessageBox.warning(self, "Time Conflict", "The new time for this task overlaps with another existing task.")
+                return
+
+        data = {
+            'start_time': start_qtime.toString("HH:mm:ss"), 'end_time': end_qtime.toString("HH:mm:ss"),
+            'project_code': project_code, 'description': description,
+            'categories': categories, 'software': ""
+        }
+
+        self.db.update_task_by_id(self.task_id, data)
+        self.accept()
