@@ -20,9 +20,11 @@ from general_tab import GeneralTab
 from timesheet_tab import TimesheetTab
 from travel_tab import TravelTab
 from qa83_tab import QA83Tab
+from weekly_tab import WeeklyTab
+
 
 class MainWindow(QMainWindow):
-    APP_VERSION = "0.0.1"
+    APP_VERSION = "0.1.0"
     HOLIDAY_FILE = 'holiday.json'
     DB_FILE = 'task_tracker.db'
     BACKUP_DIR = 'backups'
@@ -141,6 +143,14 @@ class MainWindow(QMainWindow):
             self.config = json.load(f)
         self.reload_holidays()
 
+    def save_config(self):
+        """Saves current self.config to config.json."""
+        try:
+            with open('config.json', 'w') as f:
+                json.dump(self.config, f, indent=4)
+        except Exception as e:
+            print(f"Error saving config: {e}")
+
     def init_ui(self):
         self.setWindowIcon(self.app_icon)
         self.setWindowTitle("Task Tracker")
@@ -151,6 +161,8 @@ class MainWindow(QMainWindow):
         self.timesheet_tab = TimesheetTab(parent=self, db=self.db, main_config=self.config)
         self.travel_tab = TravelTab(parent=self, db=self.db)
         self.qa83_tab = QA83Tab(parent=self, db=self.db)
+        self.weekly_tab = WeeklyTab(parent=self, db=self.db, config=self.config)
+
         
         menu_bar = self.menuBar()
         style = self.style()
@@ -195,10 +207,12 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(self.tabs)
         
-        self.tabs.addTab(self.general_tab, "General")
+        self.tabs.addTab(self.weekly_tab, "Weekly")
         self.tabs.addTab(self.timesheet_tab, "Timesheet")
         self.tabs.addTab(self.travel_tab, "Travel")
         self.tabs.addTab(self.qa83_tab, "QA83")
+        self.tabs.addTab(self.general_tab, "General")
+
         
         self.tabs.currentChanged.connect(self.on_tab_changed)
         self.on_tab_changed(self.tabs.currentIndex())
@@ -215,6 +229,9 @@ class MainWindow(QMainWindow):
             self.timesheet_tab.update_timesheet_view()
         elif current_widget == self.travel_tab:
             self.travel_tab.update_travel_view()
+        elif current_widget == self.weekly_tab:
+            self.weekly_tab.refresh_view()
+
     
     def _refresh_all_tabs(self):
         """Refreshes the data views in all relevant tabs."""
@@ -222,6 +239,8 @@ class MainWindow(QMainWindow):
         self.timesheet_tab.update_timesheet_view()
         self.travel_tab.update_travel_view()
         self.qa83_tab.update_qa83_view()
+        self.weekly_tab.refresh_view()
+
 
     def _show_about_dialog(self):
         about_dialog = AboutWindow(version=self.APP_VERSION, parent=self)
@@ -332,25 +351,105 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(int(delay_ms), lambda: self.tray_icon.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 20000))
 
     def update_daily_working_times(self):
-        today = datetime.now()
-        today_str = today.strftime("%Y-%m-%d")
-        if not self.is_working_day(today.date()): return
-        if self.db.get_work_times_for_date(today_str) is not None:
-            self.schedule_popups_for_the_day()
-            return
+        earliest_date_str = self.db.get_earliest_task_date()
+        if not earliest_date_str:
+            earliest_date = datetime.now().date()
+        else:
+            earliest_date = datetime.strptime(earliest_date_str, '%Y-%m-%d').date()
         
-        now_time = today.time().replace(second=0, microsecond=0)
-        lower_bound = time.fromisoformat(self.config['work_start_time_flexible']['lower'])
-        upper_bound = time.fromisoformat(self.config['work_start_time_flexible']['upper'])
-        effective_start_time = max(min(now_time, upper_bound), lower_bound)
-        settings_snapshot = {k: self.config[k] for k in ['work_start_time_flexible', 'daily_working_hours', 'lunch_hour', 'working_days', 'holidays']}
-        settings_snapshot['work_start_lower'] = settings_snapshot['work_start_time_flexible']['lower']
-        settings_snapshot['work_start_upper'] = settings_snapshot['work_start_time_flexible']['upper']
-        settings_snapshot['lunch_start'] = settings_snapshot['lunch_hour']['start']
-        settings_snapshot['lunch_end'] = settings_snapshot['lunch_hour']['end']
+        today = datetime.now()
+        today_date = today.date()
+        
+        current_date = earliest_date
+        while current_date <= today_date:
+            date_str = current_date.strftime("%Y-%m-%d")
+            
+            # 1. Ensure daily_work_times exists for this date
+            work_day_info = self.db.get_work_times_for_date(date_str)
+            if work_day_info is None:
+                # Prepare default settings
+                settings_snapshot = {
+                    k: self.config[k] for k in ['work_start_time_flexible', 'daily_working_hours', 'lunch_hour', 'working_days', 'holidays']
+                }
+                settings_snapshot['work_start_lower'] = settings_snapshot['work_start_time_flexible']['lower']
+                settings_snapshot['work_start_upper'] = settings_snapshot['work_start_time_flexible']['upper']
+                settings_snapshot['lunch_start'] = settings_snapshot['lunch_hour']['start']
+                settings_snapshot['lunch_end'] = settings_snapshot['lunch_hour']['end']
+                
+                # If it's a non-working day (weekend) AND not a holiday, set hours to 0
+                # User requested holidays to have standard hours (not zero).
+                is_off_day = current_date.strftime('%A') not in self.config.get('working_days', [])
+                is_holiday = date_str in self.config.get('holidays', [])
+                
+                if is_off_day and not is_holiday:
+                    settings_snapshot['daily_working_hours'] = 0.0
 
-        effective_start_time_str = effective_start_time.strftime("%H:%M:%S")
-        self.db.add_work_times(today_str, effective_start_time_str, settings_snapshot)
+                if current_date == today_date:
+                    # For today, use dynamic start time based on when we first checked in
+                    now_time = today.time().replace(second=0, microsecond=0)
+                    lower_bound = time.fromisoformat(settings_snapshot['work_start_lower'])
+                    upper_bound = time.fromisoformat(settings_snapshot['work_start_upper'])
+                    effective_start_time = max(min(now_time, upper_bound), lower_bound)
+                    effective_start_time_str = effective_start_time.strftime("%H:%M:%S")
+                else:
+                    # For past days, use the upper bound as requested ("late start")
+                    effective_start_time_str = settings_snapshot['work_start_upper']
+
+                self.db.add_work_times(date_str, effective_start_time_str, settings_snapshot)
+                # Fetch it now so we can use it for holiday check
+                work_day_info = self.db.get_work_times_for_date(date_str)
+            
+            # 2. Check for holiday task population (only for past dates)
+            if current_date < today_date:
+                tasks_for_day = self.db.get_tasks_for_date(date_str)
+                if not tasks_for_day:
+                    if date_str in self.config.get('holidays', []):
+                        holiday_code = self.config.get('holiday_project_code', 'HOLIDAY')
+                        
+                        if work_day_info:
+                            # 0:date, 1:eff_start, 2:lower, 3:upper, 4:hours, 5:l_start, 6:l_end, 7:w_days, 8:holidays
+                            eff_start_str = work_day_info[1]
+                            lunch_start_str = work_day_info[5]
+                            lunch_end_str = work_day_info[6]
+                            
+                            # Calculate work_end using default config hours (as actual hours are 0 for holidays)
+                            fmt = "%H:%M:%S"
+                            try:
+                                t_start = datetime.strptime(eff_start_str, fmt)
+                                t_l_start = datetime.strptime(lunch_start_str, fmt)
+                                t_l_end = datetime.strptime(lunch_end_str, fmt)
+                                
+                                # Use default working hours for the holiday task duration
+                                default_hours = self.config.get('daily_working_hours', 8.0)
+                                lunch_duration = t_l_end - t_l_start
+                                work_end = t_start + lunch_duration + timedelta(hours=default_hours)
+                                work_end_str = work_end.strftime(fmt)
+                                
+                                # Task 1: Start to Lunch Start
+                                self.db.add_task(
+                                    task_date=date_str,
+                                    start_time=eff_start_str,
+                                    end_time=lunch_start_str,
+                                    project_code=holiday_code,
+                                    description="Public Holiday",
+                                    categories="",
+                                    software=""
+                                )
+                                # Task 2: Lunch End to Work End
+                                self.db.add_task(
+                                    task_date=date_str,
+                                    start_time=lunch_end_str,
+                                    end_time=work_end_str,
+                                    project_code=holiday_code,
+                                    description="Public Holiday",
+                                    categories="",
+                                    software=""
+                                )
+                            except ValueError:
+                                pass # Skip if time parsing fails
+            
+            current_date += timedelta(days=1)
+
         self.schedule_popups_for_the_day()
 
     def check_for_wake_up(self):
@@ -498,8 +597,8 @@ class MainWindow(QMainWindow):
                 self.tray_icon.showMessage("Task Skipped", f"Next popup is at {next_time.strftime('%H:%M')}.", QSystemTrayIcon.MessageIcon.Information, 5000)
         self.schedule_next_popup_from_list()
 
-    def manual_popup(self, start_time=None, end_time=None, has_subsequent_task=False):
-        popup_date = self.general_tab.view_date
+    def manual_popup(self, start_time=None, end_time=None, has_subsequent_task=False, date_obj=None):
+        popup_date = date_obj or self.general_tab.view_date
         if start_time:
             popup_start_time = start_time
         else:
@@ -509,7 +608,7 @@ class MainWindow(QMainWindow):
         previous_task = self.db.get_task_before(lookup_dt)
         popup = Popup(self.db, previous_task, self.config, parent=self, is_manual_trigger=True)
         
-        popup.date_edit.setDate(QDate(self.general_tab.view_date))
+        popup.date_edit.setDate(QDate(popup_date))
 
         if start_time:
             popup.start_time_edit.setTime(QTime(start_time.hour, start_time.minute))
@@ -521,14 +620,14 @@ class MainWindow(QMainWindow):
                     temp_time = now_time.addSecs(30)
                     final_end_time = QTime(temp_time.hour(), temp_time.minute())
 
-            workday_end_py = popup._get_workday_end_time_for_date(self.general_tab.view_date)
+            workday_end_py = popup._get_workday_end_time_for_date(popup_date)
             if workday_end_py:
                 workday_end_qtime = QTime(workday_end_py.hour, workday_end_py.minute)
                 final_end_time = min(final_end_time, workday_end_qtime)
 
             popup.end_time_edit.setTime(final_end_time)
         else:
-            calculated_start_time = self.determine_start_time_for_date(self.general_tab.view_date)
+            calculated_start_time = self.determine_start_time_for_date(popup_date)
             popup.start_time_edit.setTime(calculated_start_time)
         
         if popup.exec() == QDialog.DialogCode.Accepted:

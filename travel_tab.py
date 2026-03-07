@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QTableWidgetItem, QDialog,
                              QGroupBox, QGridLayout, QCalendarWidget, QHeaderView,
                              QAbstractItemView)
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QTimer
 from PySide6.QtGui import QTextDocument
 from datetime import datetime, timedelta, time
 from datetime import datetime, timedelta
@@ -113,6 +113,7 @@ class TravelTab(QWidget):
 
         calendar.selectionChanged.connect(on_date_selected)
         cal_layout.addWidget(calendar)
+        QTimer.singleShot(0, lambda: calendar_dialog.setFixedSize(calendar_dialog.sizeHint()))
         calendar_dialog.exec()
 
     def _group_tasks_for_display(self, tasks):

@@ -17,18 +17,66 @@ import calendar
 from timesheet_tab import CopyableTableWidget
 
 class QA83SettingsDialog(QDialog):
-    """Dialog to edit name and designation for QA83 reports."""
-    def __init__(self, current_name, current_designation, parent=None):
+    """Dialog to edit name, designation and project titles for QA83 reports."""
+    def __init__(self, current_name, current_designation, project_titles, all_project_codes, parent=None):
         super().__init__(parent)
         self.setWindowTitle("QA83 Report Settings")
-        layout = QFormLayout(self)
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(500)
+        
+        main_layout = QVBoxLayout(self)
+        
+        # User Info Group
+        user_info_group = QGroupBox("User Information")
+        user_info_layout = QFormLayout(user_info_group)
         self.name_input = QLineEdit(current_name)
         self.designation_input = QLineEdit(current_designation)
-        layout.addRow("Name:", self.name_input); layout.addRow("Designation:", self.designation_input)
-        button_box = QHBoxLayout(); ok_button = QPushButton("Save"); ok_button.setDefault(True); ok_button.clicked.connect(self.accept)
-        cancel_button = QPushButton("Cancel"); cancel_button.clicked.connect(self.reject)
-        button_box.addStretch(); button_box.addWidget(cancel_button); button_box.addWidget(ok_button); layout.addRow(button_box)
-    def get_values(self): return self.name_input.text(), self.designation_input.text()
+        user_info_layout.addRow("Name:", self.name_input)
+        user_info_layout.addRow("Designation:", self.designation_input)
+        main_layout.addWidget(user_info_group)
+        
+        # Project Titles Group
+        proj_titles_group = QGroupBox("Project Titles (one per line, format CODE: TITLE)")
+        proj_titles_layout = QVBoxLayout(proj_titles_group)
+        
+        self.titles_input = QTextEdit()
+        self.titles_input.setPlaceholderText("e.g. PJ001: My Project Name")
+        
+        # Combine all codes: those in titles + those in tasks
+        all_codes = sorted(list(set(list(project_titles.keys()) + all_project_codes)))
+        
+        lines = []
+        for code in all_codes:
+            title = project_titles.get(code, "")
+            lines.append(f"{code}: {title}")
+        
+        self.titles_input.setText("\n".join(lines))
+        proj_titles_layout.addWidget(self.titles_input)
+        main_layout.addWidget(proj_titles_group)
+        
+        # Buttons
+        button_box = QHBoxLayout()
+        ok_button = QPushButton("Save All")
+        ok_button.setDefault(True)
+        ok_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_box.addStretch()
+        button_box.addWidget(cancel_button)
+        button_box.addWidget(ok_button)
+        main_layout.addLayout(button_box)
+
+    def get_values(self):
+        text = self.titles_input.toPlainText()
+        updated_titles = {}
+        for line in text.splitlines():
+            if ":" in line:
+                code, title = line.split(":", 1)
+                updated_titles[code.strip()] = title.strip()
+            elif line.strip():
+                # Fallback if no colon, just use it as code with empty title
+                updated_titles[line.strip()] = ""
+        return self.name_input.text(), self.designation_input.text(), updated_titles
 
 class ProjectTitleDialog(QDialog):
     def __init__(self, project_code, parent=None):
@@ -350,11 +398,34 @@ class EditMergedTaskDialog(QDialog):
 
 class QA83Tab(QWidget):
     CONFIG_FILE = 'QA83.json'
+    PROJECT_TITLES_FILE = 'project_names.json'
 
     def __init__(self, parent, db):
         super().__init__(parent)
-        self.db = db; self.view_date = datetime.now().date(); self.qa83_config = self._load_config()
+        self.db = db; self.view_date = datetime.now().date()
+        self.qa83_config = self._load_config()
+        self.project_titles = self._load_project_titles()
         self.init_ui(); self.update_qa83_view()
+
+    def _load_project_titles(self):
+        if os.path.exists(self.PROJECT_TITLES_FILE):
+            try:
+                with open(self.PROJECT_TITLES_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                pass
+        
+        # Migration from DB if JSON doesn't exist or is invalid
+        db_titles = self.db.get_all_project_titles()
+        if db_titles:
+            self._save_project_titles(db_titles)
+        return db_titles or {}
+
+    def _save_project_titles(self, titles_dict=None):
+        if titles_dict is not None:
+            self.project_titles = titles_dict
+        with open(self.PROJECT_TITLES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(self.project_titles, f, indent=2)
 
     def _load_config(self):
         if not os.path.exists(self.CONFIG_FILE):
@@ -436,22 +507,35 @@ class QA83Tab(QWidget):
             else: unique_proj_codes.add(task[4])
         titles_were_added = False
         for code in sorted(list(unique_proj_codes)):
-            if not self.db.get_project_title(code):
+            if not self.project_titles.get(code):
                 dialog = ProjectTitleDialog(code, self)
                 if dialog.exec():
                     title = dialog.get_title()
-                    if title: self.db.set_project_title(code, title); titles_were_added = True
+                    if title:
+                        self.project_titles[code] = title
+                        titles_were_added = True
+        
+        if titles_were_added:
+            self._save_project_titles()
         
         # Always update the view after checking for titles.
         self.update_qa83_view()
 
     def _open_settings(self):
         current_name = self.qa83_config.get("name", ""); current_designation = self.qa83_config.get("designation", "")
-        dialog = QA83SettingsDialog(current_name, current_designation, self)
+        all_project_codes = self.db.get_unique_project_codes()
+        
+        dialog = QA83SettingsDialog(current_name, current_designation, self.project_titles, all_project_codes, self)
         if dialog.exec():
-            name, designation = dialog.get_values(); self.qa83_config["name"] = name; self.qa83_config["designation"] = designation
+            name, designation, updated_titles = dialog.get_values()
+            self.qa83_config["name"] = name; self.qa83_config["designation"] = designation
             with open(self.CONFIG_FILE, 'w') as f: json.dump(self.qa83_config, f, indent=2)
-            QMessageBox.information(self, "Settings Saved", "QA83 report settings updated.")
+            
+            # Save project titles to JSON
+            self._save_project_titles(updated_titles)
+                
+            QMessageBox.information(self, "Settings Saved", "QA83 report settings and project titles updated.")
+            self.update_qa83_view()
 
     def _generate_html_report(self):
         desktop_path = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DesktopLocation)
@@ -621,6 +705,7 @@ class QA83Tab(QWidget):
             
         calendar.selectionChanged.connect(on_date_selected)
         cal_layout.addWidget(calendar)
+        QTimer.singleShot(0, lambda: dialog.setFixedSize(dialog.sizeHint()))
         dialog.exec()
     
     def _get_month_weeks_info(self, year, month):
@@ -699,7 +784,7 @@ class QA83Tab(QWidget):
 
         for proj_code, groups_in_project in projects_data.items():
             start_row_for_span = current_row
-            title = self.db.get_project_title(proj_code) or ""
+            title = self.project_titles.get(proj_code, "")
             
             proj_code_item = QTableWidgetItem(proj_code)
             proj_code_item.setTextAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)

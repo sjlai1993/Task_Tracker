@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QFormLayout,
                              QSpinBox, QDoubleSpinBox, QTimeEdit, QTextEdit, QMessageBox,
-                             QLabel, QCheckBox)
+                             QLabel, QCheckBox, QLineEdit)
 from PySide6.QtCore import QTime
 
 class SettingsWindow(QDialog):
@@ -40,6 +40,7 @@ class SettingsWindow(QDialog):
         # === MODIFIED SECTION END ===
         # =====================================================================
         self.holidays = QTextEdit()
+        self.holiday_project_code = QLineEdit()
         self.categories = QTextEdit()
         self.side_description = QTextEdit()
 
@@ -89,6 +90,7 @@ class SettingsWindow(QDialog):
         # =====================================================================
         form_layout.addRow("Working Days:", day_checkbox_layout)
         form_layout.addRow("Holidays (YYYY-MM-DD):", self.holidays)
+        form_layout.addRow("Holiday Project Code:", self.holiday_project_code)
         form_layout.addRow("Project Categories:", self.categories)
         form_layout.addRow("Additional Codes:", self.side_description)
         main_layout.addLayout(form_layout)
@@ -135,6 +137,7 @@ class SettingsWindow(QDialog):
             for checkbox in self.day_checkboxes:
                 checkbox.setChecked(checkbox.text() in saved_working_days)
             self.holidays.setText("\n".join(holidays_list))
+            self.holiday_project_code.setText(self.config.get('holiday_project_code', ''))
             self.categories.setText("\n".join(self.config['project_categories']))
             self.side_description.setText("\n".join(self.config.get('side_description', [])))
         except (FileNotFoundError, KeyError) as e:
@@ -166,13 +169,11 @@ class SettingsWindow(QDialog):
         self.config['popup_interval_minutes'] = self.popup_interval.value()
         self.config['popup_autoclose_minutes'] = self.popup_autoclose.value()
         self.config['show_schedule_notification'] = self.schedule_notify_checkbox.isChecked()
-        # =====================================================================
-        # === MODIFIED SECTION START (Save max backups value) ===
-        # =====================================================================
         self.config['max_backups_to_keep'] = self.max_backups.value()
         # =====================================================================
         # === MODIFIED SECTION END ===
         # =====================================================================
+        self.config['holiday_project_code'] = self.holiday_project_code.text().strip()
         self.config['working_days'] = [cb.text() for cb in self.day_checkboxes if cb.isChecked()]
         
         def text_to_list(widget):

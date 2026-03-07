@@ -140,6 +140,11 @@ class Database:
         self.cursor.execute('INSERT OR REPLACE INTO project_titles (project_code, project_title) VALUES (?, ?)', (project_code, project_title))
         self.conn.commit()
 
+    def get_all_project_titles(self):
+        """Retrieves all project codes and titles from the project_titles table."""
+        self.cursor.execute('SELECT project_code, project_title FROM project_titles')
+        return {row[0]: row[1] for row in self.cursor.fetchall()}
+
     def add_task(self, task_date, start_time, end_time, project_code, description, categories, software):
         self.cursor.execute('''
             INSERT INTO tasks (task_date, start_time, end_time, project_code, description, categories, software)
@@ -181,6 +186,12 @@ class Database:
     def get_tasks_for_date(self, date_str):
         self.cursor.execute('SELECT id, task_date, start_time, end_time, project_code, description, categories, software, master_task_id FROM tasks WHERE task_date = ? ORDER BY start_time', (date_str,))
         return self.cursor.fetchall()
+    
+    def get_earliest_task_date(self):
+        """Retrieves the earliest date from the tasks table."""
+        self.cursor.execute('SELECT MIN(task_date) FROM tasks')
+        result = self.cursor.fetchone()
+        return result[0] if result and result[0] else None
     
     def delete_task_by_id(self, task_id):
         self.cursor.execute('DELETE FROM tasks WHERE id = ?', (task_id,))

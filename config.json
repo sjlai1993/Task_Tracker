@@ -45,6 +45,7 @@
         "0001 : General Overhead",
         "0002 : Annual Leave",
         "0003 : Sick Leave",
+        "0004: Public Holiday",
         "PROM : Promotional Job",
         "0005 : Compassionate Leave",
         "0006 : Maternity / Paternity Leave",
@@ -53,5 +54,7 @@
         "0009 : External Training",
         "0010 : Internal Training"
     ],
-    "max_backups_to_keep": 5
+    "max_backups_to_keep": 5,
+    "holiday_project_code": "0004",
+    "weekly_zoom_factor": 1.0
 }

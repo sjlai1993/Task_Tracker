@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 
                              QGroupBox, QGridLayout, QCalendarWidget, QHeaderView,
                              QAbstractItemView, QStyledItemDelegate, QStyle, QApplication, QMenu)
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QTimer
 from PySide6.QtGui import QColor, QBrush, QFont, QKeySequence, QKeyEvent
 from datetime import datetime, timedelta, time
 
@@ -189,6 +189,7 @@ class TimesheetTab(QWidget):
 
         calendar.selectionChanged.connect(on_date_selected)
         cal_layout.addWidget(calendar)
+        QTimer.singleShot(0, lambda: calendar_dialog.setFixedSize(calendar_dialog.sizeHint()))
         calendar_dialog.exec()
 
     def update_timesheet_view(self):

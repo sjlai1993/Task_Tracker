@@ -7,7 +7,7 @@ echo ========================================
 echo.
 
 REM Run PyInstaller using the spec file
-pyinstaller TaskTracker.spec
+python -m PyInstaller TaskTracker.spec
 
 echo.
 echo ==========================================================
